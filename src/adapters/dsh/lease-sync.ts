@@ -197,8 +197,16 @@ export function createSyncLeaseAdapter(options: SyncLeaseOptions): LeaseAdapter 
     }
   }
 
-  /** Run `body` while holding the guard for `key`. Returns `undefined` when the guard never came free. */
-  function withGuard<T>(key: string, body: () => T): GuardOutcome<T> {
+  /**
+   * Run `body` while holding the guard for `key`.
+   *
+   * THE BODY IS HANDED A LIVENESS CHECK, not just the right to run. `GuardOutcome` reports whether the
+   * guard was ever obtained; `stillOurs()` reports whether it is STILL ours at the moment the body is
+   * about to act. Those are different questions, and conflating them is what let a stolen guard produce a
+   * silent lost update: the outer `finally` correctly refuses to delete a successor's guard, but by then
+   * the stale holder has already written the record.
+   */
+  function withGuard<T>(key: string, body: (stillOurs: () => boolean) => T): GuardOutcome<T> {
     const guard = guardOf(key)
     mkdirSync(dirname(guard), { recursive: true })
     const deadline = Date.now() + SYNC_LEASE_GUARD_WAIT_MS
@@ -264,7 +272,21 @@ export function createSyncLeaseAdapter(options: SyncLeaseOptions): LeaseAdapter 
       }
     }
     try {
-      return { acquired: true, value: body() }
+      /**
+       * `stillOurs()` RE-READS THE STAMP EVERY TIME IT IS ASKED.
+       *
+       * It is a closure rather than a boolean captured once, because the answer can change between the
+       * moment the guard was taken and the moment the body acts — that is precisely the failure it exists
+       * to catch. Reading it fresh makes the check meaningful instead of decorative.
+       */
+      const stillOurs = (): boolean => {
+        try {
+          return readFileSync(guard, 'utf8') === stamp
+        } catch {
+          return false
+        }
+      }
+      return { acquired: true, value: body(stillOurs) }
     } finally {
       if (fd !== undefined) {
         try {
@@ -368,7 +390,7 @@ export function createSyncLeaseAdapter(options: SyncLeaseOptions): LeaseAdapter 
       const ttlMs = ttlOf(request)
       const warnings: string[] = []
       let holder: LeaseRecord | undefined
-      const outcome = withGuard(key, () => {
+      const outcome = withGuard(key, (stillOurs) => {
         const raw = readRecord(pathOf(key))
         const current = raw.present ? asRecord(key, raw.value) : undefined
         if (raw.present && current === undefined && unreadableAndFresh(key)) return undefined
@@ -405,8 +427,25 @@ export function createSyncLeaseAdapter(options: SyncLeaseOptions): LeaseAdapter 
       const now = Number.isFinite(Number(request.now)) ? Number(request.now) : Date.now()
       const owner = typeof request.owner === 'string' && request.owner.length > 0 ? request.owner : OWNER
       const ttlMs = ttlOf(request)
-      const outcome = withGuard(key, () => {
+      const outcome = withGuard(key, (stillOurs) => {
         clearLegacyArtifact(key)
+        /**
+         * THE RE-CHECK THAT CLOSES THE STOLEN-GUARD WINDOW.
+         *
+         * `withGuard` can be STOLEN from: its age-based reclaim exists so a crash cannot deadlock the
+         * store forever, and a holder descheduled past the threshold loses it. When that happens the
+         * ORIGINAL holder is still running its body — two callers inside one critical section, and the
+         * later `rename` silently wins.
+         *
+         * The `finally` in `withGuard` already refuses to delete a guard it no longer owns. That protects
+         * the SUCCESSOR but does nothing for the WRITE: the stale holder has already decided and already
+         * renamed its record into place.
+         *
+         * So the body verifies ownership ONCE MORE, immediately before acting, and stands down if it was
+         * stolen from. This is a seqlock-style double check: the outer guard provides exclusion in the
+         * normal case, and this inner check converts the abnormal case from a lost update into a retry.
+         */
+        if (!stillOurs()) return undefined
         const raw = readRecord(pathOf(key))
         const current = raw.present ? asRecord(key, raw.value) : undefined
         if (raw.present && current === undefined && unreadableAndFresh(key)) return undefined
@@ -444,7 +483,8 @@ export function createSyncLeaseAdapter(options: SyncLeaseOptions): LeaseAdapter 
     },
 
     releaseSync(lease: LeaseRecord): boolean {
-      const outcome = withGuard(lease.key, () => {
+      const outcome = withGuard(lease.key, (stillOurs) => {
+        if (!stillOurs()) return false
         const current = asRecord(lease.key, readRecord(pathOf(lease.key)).value)
         if (planRelease(current, lease) !== LEASE_RELEASE) return false
         rmSync(pathOf(lease.key), { force: true })
@@ -475,8 +515,9 @@ export function createSyncLeaseAdapter(options: SyncLeaseOptions): LeaseAdapter 
       const now = Number.isFinite(Number(request.now)) ? Number(request.now) : Date.now()
       const ttlMs = ttlOf(request)
       const refusal: { holder?: LeaseRecord } = {}
-      const outcome = withGuard(lease.key, () => {
+      const outcome = withGuard(lease.key, (stillOurs) => {
         const current = asRecord(lease.key, readRecord(pathOf(lease.key)).value)
+        if (!stillOurs()) return undefined
         const next = planRenew(current, lease, { now, ttlMs })
         if (next === undefined) {
           if (current !== undefined && !isLeaseExpired(current, now)) refusal.holder = current

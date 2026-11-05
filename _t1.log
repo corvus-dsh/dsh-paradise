@@ -1,0 +1,880 @@
+﻿TAP version 13
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: caller: a supplied marker is PREPENDED to the prompt, not replaced by the default
+ok 1 - caller: a supplied marker is PREPENDED to the prompt, not replaced by the default
+  ---
+  duration_ms: 2.4083
+  type: 'test'
+  ...
+# Subtest: caller: the SAME marker is what idempotence searches the log for
+ok 2 - caller: the SAME marker is what idempotence searches the log for
+  ---
+  duration_ms: 2.7568
+  type: 'test'
+  ...
+# Subtest: dialect: the protocol says `interrupt`, this host accepts `steer`
+ok 3 - dialect: the protocol says `interrupt`, this host accepts `steer`
+  ---
+  duration_ms: 0.3896
+  type: 'test'
+  ...
+# Subtest: dialect: `queue` is spelled the same by both sides, and stays that way
+ok 4 - dialect: `queue` is spelled the same by both sides, and stays that way
+  ---
+  duration_ms: 0.28
+  type: 'test'
+  ...
+# Subtest: fallback: by default a refused queue IS retried as an interrupt
+ok 5 - fallback: by default a refused queue IS retried as an interrupt
+  ---
+  duration_ms: 0.3348
+  type: 'test'
+  ...
+# Subtest: fallback:false turns a refusal into a REPORTED failure, not a silent escalation
+ok 6 - fallback:false turns a refusal into a REPORTED failure, not a silent escalation
+  ---
+  duration_ms: 0.2635
+  type: 'test'
+  ...
+# Subtest: publish: by default the layer attaches the workspace and announces the session
+ok 7 - publish: by default the layer attaches the workspace and announces the session
+  ---
+  duration_ms: 1.4006
+  type: 'test'
+  ...
+# Subtest: publish:false leaves BOTH side effects to the caller, so neither happens twice
+ok 8 - publish:false leaves BOTH side effects to the caller, so neither happens twice
+  ---
+  duration_ms: 0.354
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: conformance: the reference host satisfies the structural check
+ok 9 - conformance: the reference host satisfies the structural check
+  ---
+  duration_ms: 1.824
+  type: 'test'
+  ...
+# Subtest: conformance: binding a complete host yields usable dependencies
+ok 10 - conformance: binding a complete host yields usable dependencies
+  ---
+  duration_ms: 0.2448
+  type: 'test'
+  ...
+# Subtest: conformance: a host missing a REQUIRED adapter is rejected at bind time, naming it
+ok 11 - conformance: a host missing a REQUIRED adapter is rejected at bind time, naming it
+  ---
+  duration_ms: 0.4941
+  type: 'test'
+  ...
+# Subtest: conformance: storage without a session adapter is rejected too
+ok 12 - conformance: storage without a session adapter is rejected too
+  ---
+  duration_ms: 0.2994
+  type: 'test'
+  ...
+# Subtest: session: create refuses an empty workspace — the protocol has no way to express "guess it"
+ok 13 - session: create refuses an empty workspace — the protocol has no way to express "guess it"
+  ---
+  duration_ms: 0.4051
+  type: 'test'
+  ...
+# Subtest: session: create refuses a relative workspace
+ok 14 - session: create refuses a relative workspace
+  ---
+  duration_ms: 0.4762
+  type: 'test'
+  ...
+# Subtest: session: create answers an opaque ref and a stage on SUCCESS
+ok 15 - session: create answers an opaque ref and a stage on SUCCESS
+  ---
+  duration_ms: 0.5101
+  type: 'test'
+  ...
+# Subtest: session: a duplicate id is refused, not silently reused
+ok 16 - session: a duplicate id is refused, not silently reused
+  ---
+  duration_ms: 0.2319
+  type: 'test'
+  ...
+# Subtest: session: inject reports per-item what the transcript will actually SHOW
+ok 17 - session: inject reports per-item what the transcript will actually SHOW
+  ---
+  duration_ms: 0.4751
+  type: 'test'
+  ...
+# Subtest: session: inject into a missing session fails with the id and a stage
+ok 18 - session: inject into a missing session fails with the id and a stage
+  ---
+  duration_ms: 0.7692
+  type: 'test'
+  ...
+# Subtest: session: trigger records the mode it was asked for
+ok 19 - session: trigger records the mode it was asked for
+  ---
+  duration_ms: 0.3361
+  type: 'test'
+  ...
+# Subtest: session: readLog reports what was written, including per-message renderability
+ok 20 - session: readLog reports what was written, including per-message renderability
+  ---
+  duration_ms: 0.5113
+  type: 'test'
+  ...
+# Subtest: session: readLog NEVER throws — a missing session is readable:false with a reason
+ok 21 - session: readLog NEVER throws — a missing session is readable:false with a reason
+  ---
+  duration_ms: 0.1571
+  type: 'test'
+  ...
+# Subtest: session: subscribe delivers events for THIS session only
+ok 22 - session: subscribe delivers events for THIS session only
+  ---
+  duration_ms: 0.2782
+  type: 'test'
+  ...
+# Subtest: session: subscribing to a missing session is a no-op unsubscribe, not a throw
+ok 23 - session: subscribing to a missing session is a no-op unsubscribe, not a throw
+  ---
+  duration_ms: 0.1879
+  type: 'test'
+  ...
+# Subtest: storage: undefined means "not stored", distinct from a stored null
+ok 24 - storage: undefined means "not stored", distinct from a stored null
+  ---
+  duration_ms: 0.1185
+  type: 'test'
+  ...
+# Subtest: storage: a write is a SNAPSHOT, so mutating the source does not change what is stored
+ok 25 - storage: a write is a SNAPSHOT, so mutating the source does not change what is stored
+  ---
+  duration_ms: 0.1057
+  type: 'test'
+  ...
+# Subtest: storage: keys(prefix) finds a namespace without knowing the layout
+ok 26 - storage: keys(prefix) finds a namespace without knowing the layout
+  ---
+  duration_ms: 0.1422
+  type: 'test'
+  ...
+# Subtest: storage: remove is idempotent
+ok 27 - storage: remove is idempotent
+  ---
+  duration_ms: 0.1084
+  type: 'test'
+  ...
+# Subtest: tools: an unknown tool is a RESULT with isError, never a thrown exception
+ok 28 - tools: an unknown tool is a RESULT with isError, never a thrown exception
+  ---
+  duration_ms: 0.1144
+  type: 'test'
+  ...
+# Subtest: tools: list answers descriptors with a schema field
+ok 29 - tools: list answers descriptors with a schema field
+  ---
+  duration_ms: 0.1058
+  type: 'test'
+  ...
+# Subtest: neutrality: a caller using only the protocol words works end to end
+ok 30 - neutrality: a caller using only the protocol words works end to end
+  ---
+  duration_ms: 0.3017
+  type: 'test'
+  ...
+# Subtest: neutrality: the same caller works on a SECOND host without modification
+ok 31 - neutrality: the same caller works on a SECOND host without modification
+  ---
+  duration_ms: 0.134
+  type: 'test'
+  ...
+# Subtest: honesty: the host adapter reports what it can ACTUALLY do on a bare context
+ok 32 - honesty: the host adapter reports what it can ACTUALLY do on a bare context
+  ---
+  duration_ms: 1.1738
+  type: 'test'
+  ...
+# Subtest: honesty: a fully mounted host enables the write verbs
+ok 33 - honesty: a fully mounted host enables the write verbs
+  ---
+  duration_ms: 0.2941
+  type: 'test'
+  ...
+# Subtest: honesty: injectIntoRunning stays false — the create-time transaction cannot append to a running turn
+ok 34 - honesty: injectIntoRunning stays false — the create-time transaction cannot append to a running turn
+  ---
+  duration_ms: 0.3767
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: disk: EVERY zstd frame is decoded — one frame is not the whole log
+ok 35 - disk: EVERY zstd frame is decoded — one frame is not the whole log
+  ---
+  duration_ms: 6.9981
+  type: 'test'
+  ...
+# Subtest: disk: one event per frame — the extreme case still reads completely
+ok 36 - disk: one event per frame — the extreme case still reads completely
+  ---
+  duration_ms: 2.4921
+  type: 'test'
+  ...
+# Subtest: disk: readDiskEventTypes is the one-liner a receipt prints
+ok 37 - disk: readDiskEventTypes is the one-liner a receipt prints
+  ---
+  duration_ms: 1.7686
+  type: 'test'
+  ...
+# Subtest: disk: the briefing is reported by seq, role, source and RENDERABILITY
+ok 38 - disk: the briefing is reported by seq, role, source and RENDERABILITY
+  ---
+  duration_ms: 2.9321
+  type: 'test'
+  ...
+# Subtest: disk: a developer/message is reported as PRESENT BUT NOT RENDERED
+ok 39 - disk: a developer/message is reported as PRESENT BUT NOT RENDERED
+  ---
+  duration_ms: 2.8143
+  type: 'test'
+  ...
+# Subtest: disk: a log with NO message reports the absence, not a success
+ok 40 - disk: a log with NO message reports the absence, not a success
+  ---
+  duration_ms: 3.7559
+  type: 'test'
+  ...
+# Subtest: disk: no path and no cwd is stated, never guessed
+ok 41 - disk: no path and no cwd is stated, never guessed
+  ---
+  duration_ms: 0.2791
+  type: 'test'
+  ...
+# Subtest: disk: a missing file is a stated reason, not an exception
+ok 42 - disk: a missing file is a stated reason, not an exception
+  ---
+  duration_ms: 1.7109
+  type: 'test'
+  ...
+# Subtest: disk: a throwing pathProbe is reported, and the read still returns
+ok 43 - disk: a throwing pathProbe is reported, and the read still returns
+  ---
+  duration_ms: 0.416
+  type: 'test'
+  ...
+# Subtest: disk: a plain-JSONL log is read too (no frames to walk)
+ok 44 - disk: a plain-JSONL log is read too (no frames to walk)
+  ---
+  duration_ms: 3.9698
+  type: 'test'
+  ...
+# Subtest: disk: a file that is neither zstd nor JSONL reports that, without throwing
+ok 45 - disk: a file that is neither zstd nor JSONL reports that, without throwing
+  ---
+  duration_ms: 2.5043
+  type: 'test'
+  ...
+# Subtest: disk: a torn tail frame is tolerated — the earlier frames still read
+ok 46 - disk: a torn tail frame is tolerated — the earlier frames still read
+  ---
+  duration_ms: 2.4684
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: resolve: a service mounted only through ctx.get is found
+ok 47 - resolve: a service mounted only through ctx.get is found
+  ---
+  duration_ms: 1.973
+  type: 'test'
+  ...
+# Subtest: resolve: a service mounted only as a direct property is found
+ok 48 - resolve: a service mounted only as a direct property is found
+  ---
+  duration_ms: 0.2293
+  type: 'test'
+  ...
+# Subtest: resolve: the METHOD decides, not the position
+ok 49 - resolve: the METHOD decides, not the position
+  ---
+  duration_ms: 0.1508
+  type: 'test'
+  ...
+# Subtest: resolve: a throwing getter is simply not a candidate
+ok 50 - resolve: a throwing getter is simply not a candidate
+  ---
+  duration_ms: 0.1358
+  type: 'test'
+  ...
+# Subtest: resolve: no candidate at all is undefined, never a fabricated object
+ok 51 - resolve: no candidate at all is undefined, never a fabricated object
+  ---
+  duration_ms: 0.1147
+  type: 'test'
+  ...
+# Subtest: capabilities: a bare ctx reports everything missing, with a consequence for each
+ok 52 - capabilities: a bare ctx reports everything missing, with a consequence for each
+  ---
+  duration_ms: 0.3501
+  type: 'test'
+  ...
+# Subtest: capabilities: a fully mounted host reports every probed capability
+ok 53 - capabilities: a fully mounted host reports every probed capability
+  ---
+  duration_ms: 0.7062
+  type: 'test'
+  ...
+# Subtest: capabilities: a partial host names EXACTLY what is missing
+ok 54 - capabilities: a partial host names EXACTLY what is missing
+  ---
+  duration_ms: 0.1715
+  type: 'test'
+  ...
+# Subtest: capabilities: the read layer needs nothing, and that is stated
+ok 55 - capabilities: the read layer needs nothing, and that is stated
+  ---
+  duration_ms: 0.1279
+  type: 'test'
+  ...
+# Subtest: errors: a ParadiseError carries code, stage and the code inside the message
+ok 56 - errors: a ParadiseError carries code, stage and the code inside the message
+  ---
+  duration_ms: 0.3171
+  type: 'test'
+  ...
+# Subtest: errors: wrapping preserves the ORIGINAL stack
+ok 57 - errors: wrapping preserves the ORIGINAL stack
+  ---
+  duration_ms: 0.5513
+  type: 'test'
+  ...
+# Subtest: errors: an already-paradise error is not wrapped twice
+ok 58 - errors: an already-paradise error is not wrapped twice
+  ---
+  duration_ms: 0.1057
+  type: 'test'
+  ...
+# Subtest: errors: the missing-layer error names the CONSEQUENCE
+ok 59 - errors: the missing-layer error names the CONSEQUENCE
+  ---
+  duration_ms: 0.1109
+  type: 'test'
+  ...
+# Subtest: P2 contract: the write layer says which phase it belongs to
+ok 60 - P2 contract: the write layer says which phase it belongs to
+  ---
+  duration_ms: 0.0612
+  type: 'test'
+  ...
+# Subtest: P2 contract: an unimplemented write path THROWS instead of faking success
+ok 61 - P2 contract: an unimplemented write path THROWS instead of faking success
+  ---
+  duration_ms: 0.5202
+  type: 'test'
+  ...
+# Subtest: P2 contract: publishing is unimplemented too
+ok 62 - P2 contract: publishing is unimplemented too
+  ---
+  duration_ms: 0.19
+  type: 'test'
+  ...
+# Subtest: P2 contract: the seven unified rules are enumerable, so a cross-plugin test can walk them
+ok 63 - P2 contract: the seven unified rules are enumerable, so a cross-plugin test can walk them
+  ---
+  duration_ms: 0.2522
+  type: 'test'
+  ...
+# Subtest: P2 contract: the carrying message defaults to the VISIBLE type
+ok 64 - P2 contract: the carrying message defaults to the VISIBLE type
+  ---
+  duration_ms: 0.1765
+  type: 'test'
+  ...
+# Subtest: policy: only user/message and assistant/message are reported as rendered
+ok 65 - policy: only user/message and assistant/message are reported as rendered
+  ---
+  duration_ms: 0.1637
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: isolation: there are neutral files to scan (the gate is not vacuous)
+ok 66 - isolation: there are neutral files to scan (the gate is not vacuous)
+  ---
+  duration_ms: 3.5232
+  type: 'test'
+  ...
+# Subtest: isolation: no neutral file names a host service
+ok 67 - isolation: no neutral file names a host service
+  ---
+  duration_ms: 5.1065
+  type: 'test'
+  ...
+# Subtest: isolation: the neutral reader takes a deriver instead of importing a layout
+ok 68 - isolation: the neutral reader takes a deriver instead of importing a layout
+  ---
+  duration_ms: 0.5955
+  type: 'test'
+  ...
+# Subtest: isolation: the neutral policy module holds no host constant
+ok 69 - isolation: the neutral policy module holds no host constant
+  ---
+  duration_ms: 0.2955
+  type: 'test'
+  ...
+# Subtest: isolation: the host adapter directory is where those facts actually live
+ok 70 - isolation: the host adapter directory is where those facts actually live
+  ---
+  duration_ms: 0.4004
+  type: 'test'
+  ...
+# Subtest: isolation: every host-specific file lives under adapters/
+not ok 71 - isolation: every host-specific file lives under adapters/
+  ---
+  duration_ms: 1.6907
+  type: 'test'
+  location: 'D:\\持久层能力架构\\dsh-paradise\\test\\isolation.test.mjs:131:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    unexpected top-level entries under src/: lease-adapter.ts, lease.ts. Host specifics belong under adapters/<host>/; nothing else should need a new directory.
+    + actual - expected
+    
+    + [
+    +   'lease-adapter.ts',
+    +   'lease.ts'
+    + ]
+    - []
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    0: 'lease-adapter.ts'
+    1: 'lease.ts'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/%E6%8C%81%E4%B9%85%E5%B1%82%E8%83%BD%E5%8A%9B%E6%9E%B6%E6%9E%84/dsh-paradise/test/isolation.test.mjs:140:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: isolation: the adapter reports its capabilities from PROBING, not from a phase flag
+ok 72 - isolation: the adapter reports its capabilities from PROBING, not from a phase flag
+  ---
+  duration_ms: 13.259
+  type: 'test'
+  ...
+# Subtest: package.json: no UTF-8 BOM (a BOM makes the entry report 包不可用)
+ok 73 - package.json: no UTF-8 BOM (a BOM makes the entry report 包不可用)
+  ---
+  duration_ms: 2.1867
+  type: 'test'
+  ...
+# Subtest: package.json: parses as JSON
+ok 74 - package.json: parses as JSON
+  ---
+  duration_ms: 0.5241
+  type: 'test'
+  ...
+# Subtest: manifest.json: no UTF-8 BOM (a BOM makes the entry report 包不可用)
+ok 75 - manifest.json: no UTF-8 BOM (a BOM makes the entry report 包不可用)
+  ---
+  duration_ms: 0.304
+  type: 'test'
+  ...
+# Subtest: manifest.json: parses as JSON
+ok 76 - manifest.json: parses as JSON
+  ---
+  duration_ms: 0.2653
+  type: 'test'
+  ...
+# Subtest: package.json declares the dsh.bundle patch the Loader looks for
+ok 77 - package.json declares the dsh.bundle patch the Loader looks for
+  ---
+  duration_ms: 0.3437
+  type: 'test'
+  ...
+# Subtest: manifest and package agree on version, entry and activation
+ok 78 - manifest and package agree on version, entry and activation
+  ---
+  duration_ms: 0.574
+  type: 'test'
+  ...
+# Subtest: the patch inserts exactly one row, with no config
+ok 79 - the patch inserts exactly one row, with no config
+  ---
+  duration_ms: 0.8531
+  type: 'test'
+  ...
+# Subtest: the layer declares NO services and NO tools — it is a library
+ok 80 - the layer declares NO services and NO tools — it is a library
+  ---
+  duration_ms: 1.7927
+  type: 'test'
+  ...
+# Subtest: purity: the protocol directory has files to scan (the gate is not vacuous)
+ok 81 - purity: the protocol directory has files to scan (the gate is not vacuous)
+  ---
+  duration_ms: 2.0639
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/adapters.ts names no host
+ok 82 - purity: src/protocol/adapters.ts names no host
+  ---
+  duration_ms: 0.9336
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/adapters.ts expresses no host-specific concept
+ok 83 - purity: src/protocol/adapters.ts expresses no host-specific concept
+  ---
+  duration_ms: 0.5913
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/index.ts names no host
+ok 84 - purity: src/protocol/index.ts names no host
+  ---
+  duration_ms: 0.3792
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/index.ts expresses no host-specific concept
+ok 85 - purity: src/protocol/index.ts expresses no host-specific concept
+  ---
+  duration_ms: 0.4523
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/lease.ts names no host
+ok 86 - purity: src/protocol/lease.ts names no host
+  ---
+  duration_ms: 0.3467
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/lease.ts expresses no host-specific concept
+ok 87 - purity: src/protocol/lease.ts expresses no host-specific concept
+  ---
+  duration_ms: 0.328
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/types.ts names no host
+ok 88 - purity: src/protocol/types.ts names no host
+  ---
+  duration_ms: 0.2819
+  type: 'test'
+  ...
+# Subtest: purity: src/protocol/types.ts expresses no host-specific concept
+ok 89 - purity: src/protocol/types.ts expresses no host-specific concept
+  ---
+  duration_ms: 0.373
+  type: 'test'
+  ...
+# Subtest: purity: the protocol exports no value that could construct a host artifact
+ok 90 - purity: the protocol exports no value that could construct a host artifact
+  ---
+  duration_ms: 0.7942
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: escaping: the two MEASURED real directory names round-trip
+ok 91 - escaping: the two MEASURED real directory names round-trip
+  ---
+  duration_ms: 1.5664
+  type: 'test'
+  ...
+# Subtest: escaping: ascii survives, the drive colon vanishes, separators become dashes
+ok 92 - escaping: ascii survives, the drive colon vanishes, separators become dashes
+  ---
+  duration_ms: 0.2278
+  type: 'test'
+  ...
+# Subtest: escaping: hex is uppercase and always four digits
+ok 93 - escaping: hex is uppercase and always four digits
+  ---
+  duration_ms: 0.3662
+  type: 'test'
+  ...
+# Subtest: escaping: it is NOT encodeURIComponent, and the difference is load-bearing
+ok 94 - escaping: it is NOT encodeURIComponent, and the difference is load-bearing
+  ---
+  duration_ms: 0.1688
+  type: 'test'
+  ...
+# Subtest: escaping: a mixed-case path keeps its case
+ok 95 - escaping: a mixed-case path keeps its case
+  ---
+  duration_ms: 0.1394
+  type: 'test'
+  ...
+# Subtest: escaping: an astral character is escaped per UTF-16 code unit
+ok 96 - escaping: an astral character is escaped per UTF-16 code unit
+  ---
+  duration_ms: 0.1515
+  type: 'test'
+  ...
+# Subtest: path: the layout is <home>/sessions/<escaped cwd>/<sessionId>/session.v4.jsonl.zstd
+ok 97 - path: the layout is <home>/sessions/<escaped cwd>/<sessionId>/session.v4.jsonl.zstd
+  ---
+  duration_ms: 0.3856
+  type: 'test'
+  ...
+# Subtest: path: it says DERIVED, never authoritative
+ok 98 - path: it says DERIVED, never authoritative
+  ---
+  duration_ms: 0.4398
+  type: 'test'
+  ...
+# Subtest: path: a trailing separator on home does not double up
+ok 99 - path: a trailing separator on home does not double up
+  ---
+  duration_ms: 0.2304
+  type: 'test'
+  ...
+# Subtest: path: no cwd is "unavailable" with a stated reason
+ok 100 - path: no cwd is "unavailable" with a stated reason
+  ---
+  duration_ms: 0.3539
+  type: 'test'
+  ...
+# Subtest: path: no home is "unavailable" with a stated reason
+ok 101 - path: no home is "unavailable" with a stated reason
+  ---
+  duration_ms: 0.1748
+  type: 'test'
+  ...
+# Subtest: path: DSH_HOME comes from the environment when not passed
+ok 102 - path: DSH_HOME comes from the environment when not passed
+  ---
+  duration_ms: 0.1885
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: shape: a valid tape passes the full validator
+ok 103 - shape: a valid tape passes the full validator
+  ---
+  duration_ms: 2.1456
+  type: 'test'
+  ...
+# Subtest: shape: an unattributable user/message is REFUSED — provenance rides on the id
+ok 104 - shape: an unattributable user/message is REFUSED — provenance rides on the id
+  ---
+  duration_ms: 0.643
+  type: 'test'
+  ...
+# Subtest: shape: a user/message carrying turn/step is REFUSED — the host never writes that
+ok 105 - shape: a user/message carrying turn/step is REFUSED — the host never writes that
+  ---
+  duration_ms: 0.2418
+  type: 'test'
+  ...
+# Subtest: shape: an rpcId on our own message is REFUSED — that marks a real human prompt
+ok 106 - shape: an rpcId on our own message is REFUSED — that marks a real human prompt
+  ---
+  duration_ms: 0.3037
+  type: 'test'
+  ...
+# Subtest: shape: a developer-role briefing is legal, step-scoped, and has no echo
+ok 107 - shape: a developer-role briefing is legal, step-scoped, and has no echo
+  ---
+  duration_ms: 0.3051
+  type: 'test'
+  ...
+# Subtest: shape: a tape with NO carrying message is refused by ROLE
+ok 108 - shape: a tape with NO carrying message is refused by ROLE
+  ---
+  duration_ms: 0.2349
+  type: 'test'
+  ...
+# Subtest: shape: the first SURFACE node must be the system head
+ok 109 - shape: the first SURFACE node must be the system head
+  ---
+  duration_ms: 0.2905
+  type: 'test'
+  ...
+# Subtest: shape: an OPEN turn is refused — the session must be born asleep
+ok 110 - shape: an OPEN turn is refused — the session must be born asleep
+  ---
+  duration_ms: 0.155
+  type: 'test'
+  ...
+# Subtest: shape: a turn/end that is not "completed" is refused
+ok 111 - shape: a turn/end that is not "completed" is refused
+  ---
+  duration_ms: 0.2
+  type: 'test'
+  ...
+# Subtest: shape: surfaceOp lands on messages only, and seq/time are contiguous
+ok 112 - shape: surfaceOp lands on messages only, and seq/time are contiguous
+  ---
+  duration_ms: 0.2296
+  type: 'test'
+  ...
+# Subtest: shape: a standalone tool/result is refused
+ok 113 - shape: a standalone tool/result is refused
+  ---
+  duration_ms: 0.1913
+  type: 'test'
+  ...
+# Subtest: shape: EMPTY content is refused — a session with no content is the bug, not a fallback
+ok 114 - shape: EMPTY content is refused — a session with no content is the bug, not a fallback
+  ---
+  duration_ms: 0.1352
+  type: 'test'
+  ...
+# Subtest: shape: a relative cwd is refused when BUILDING the tape
+ok 115 - shape: a relative cwd is refused when BUILDING the tape
+  ---
+  duration_ms: 0.1099
+  type: 'test'
+  ...
+# Subtest: shape: content with no plugin provenance is refused
+ok 116 - shape: content with no plugin provenance is refused
+  ---
+  duration_ms: 0.1261
+  type: 'test'
+  ...
+# Subtest: shape: every refusal carries a code AND a stage
+ok 117 - shape: every refusal carries a code AND a stage
+  ---
+  duration_ms: 0.1244
+  type: 'test'
+  ...
+# Subtest: shape: the carrying message id carries the documented prefix
+ok 118 - shape: the carrying message id carries the documented prefix
+  ---
+  duration_ms: 0.1795
+  type: 'test'
+  ...
+# Subtest: shape: describeRendered reads the TAPE, not the request
+ok 119 - shape: describeRendered reads the TAPE, not the request
+  ---
+  duration_ms: 0.2218
+  type: 'test'
+  ...
+# Subtest: paradise still exposes the write machinery its dependents call
+ok 120 - paradise still exposes the write machinery its dependents call
+  ---
+  duration_ms: 0.1098
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: tape: a caller-supplied tape is written verbatim, in the caller order
+ok 121 - tape: a caller-supplied tape is written verbatim, in the caller order
+  ---
+  duration_ms: 6.1641
+  type: 'test'
+  ...
+# Subtest: tape: the adapter still assigns seq, time, and per-event metadata
+ok 122 - tape: the adapter still assigns seq, time, and per-event metadata
+  ---
+  duration_ms: 0.8206
+  type: 'test'
+  ...
+# Subtest: tape: the cold read is checked against WHAT WAS WRITTEN, not against empty items
+ok 123 - tape: the cold read is checked against WHAT WAS WRITTEN, not against empty items
+  ---
+  duration_ms: 0.464
+  type: 'test'
+  ...
+# Subtest: tape: an ILLEGAL tape is refused before anything is written
+ok 124 - tape: an ILLEGAL tape is refused before anything is written
+  ---
+  duration_ms: 0.5095
+  type: 'test'
+  ...
+# Subtest: tape: a tape whose first surface node is not the system head is refused
+ok 125 - tape: a tape whose first surface node is not the system head is refused
+  ---
+  duration_ms: 1.0013
+  type: 'test'
+  ...
+# Subtest: tape: a bad cwd is refused before the tape is even examined
+ok 126 - tape: a bad cwd is refused before the tape is even examined
+  ---
+  duration_ms: 0.3583
+  type: 'test'
+  ...
+# Subtest: tape: when both tape and items are given, the TAPE wins
+ok 127 - tape: when both tape and items are given, the TAPE wins
+  ---
+  duration_ms: 0.9229
+  type: 'test'
+  ...
+# [dsh-paradise] layer version 0.3.0 (P1: read + protocol)
+# Subtest: write: create answers a stage and an opaque ref on success
+ok 128 - write: create answers a stage and an opaque ref on success
+  ---
+  duration_ms: 1.5571
+  type: 'test'
+  ...
+# Subtest: write: create refuses an empty or relative workspace BEFORE anything exists
+ok 129 - write: create refuses an empty or relative workspace BEFORE anything exists
+  ---
+  duration_ms: 0.2393
+  type: 'test'
+  ...
+# Subtest: write: a duplicate id is refused and the first session is untouched
+ok 130 - write: a duplicate id is refused and the first session is untouched
+  ---
+  duration_ms: 0.2225
+  type: 'test'
+  ...
+# Subtest: write: inject answers per item, and only the visible one is transcribed as visible
+ok 131 - write: inject answers per item, and only the visible one is transcribed as visible
+  ---
+  duration_ms: 0.6226
+  type: 'test'
+  ...
+# Subtest: write: injecting into a session that does not exist is a failure with the id
+ok 132 - write: injecting into a session that does not exist is a failure with the id
+  ---
+  duration_ms: 0.226
+  type: 'test'
+  ...
+# Subtest: write: trigger marks the session running and records which mode was used
+ok 133 - write: trigger marks the session running and records which mode was used
+  ---
+  duration_ms: 0.2537
+  type: 'test'
+  ...
+# Subtest: write: triggering a session that does not exist fails, and starts nothing
+ok 134 - write: triggering a session that does not exist fails, and starts nothing
+  ---
+  duration_ms: 0.1747
+  type: 'test'
+  ...
+# Subtest: write: probeDeletion answers present, then absent — and never guesses
+ok 135 - write: probeDeletion answers present, then absent — and never guesses
+  ---
+  duration_ms: 0.2116
+  type: 'test'
+  ...
+# Subtest: write: the memory host claims every capability it can actually serve
+ok 136 - write: the memory host claims every capability it can actually serve
+  ---
+  duration_ms: 0.1465
+  type: 'test'
+  ...
+# Subtest: lifecycle: 创建 → 注入 → 点火 → 读回 → 删除核实, on the HOSTLESS host
+ok 137 - lifecycle: 创建 → 注入 → 点火 → 读回 → 删除核实, on the HOSTLESS host
+  ---
+  duration_ms: 0.6769
+  type: 'test'
+  ...
+# Subtest: lifecycle: the SAME caller runs unchanged on the HOST-BACKED adapter (capabilities permitting)
+ok 138 - lifecycle: the SAME caller runs unchanged on the HOST-BACKED adapter (capabilities permitting)
+  ---
+  duration_ms: 1.3715
+  type: 'test'
+  ...
+# Subtest: lifecycle: the same caller ALSO completes on a fully mounted host
+ok 139 - lifecycle: the same caller ALSO completes on a fully mounted host
+  ---
+  duration_ms: 3.6835
+  type: 'test'
+  ...
+1..139
+# tests 139
+# suites 0
+# pass 138
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 561.6759

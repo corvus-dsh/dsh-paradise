@@ -1,0 +1,31 @@
+{
+  "name": "dsh-paradise",
+  "version": "0.4.0",
+  "description": "DSH 彼岸层 (paradise). P1: the read layer (frame-by-frame log decoding). P1.5: a HOST-NEUTRAL PROTOCOL — SessionAdapter / StorageAdapter / ToolAdapter — plus one implementation per host under src/adapters/.",
+  "entry": "index.js",
+  "activate": "activate(ctx, config)",
+  "permissions": [],
+  "services": [],
+  "hooks": [],
+  "tools": [],
+  "engines": {
+    "dsh": ">=0.2.1-rc.5",
+    "node": ">=20"
+  },
+  "redLines": {
+    "protocolNamesNoHost": "src/protocol/ may not name a host or a host concept; enforced by test AND by preflight on the shipped artifact",
+    "policyOnlyAnswersPhysical": "this layer never decides WHEN to create a session or WHAT to write into it",
+    "readNeverWrites": "the read layer opens no handle and writes nothing",
+    "derivedPathsAreLabelled": "a path this layer derives says derived:<how>; it is never presented as host-authoritative",
+    "unreadableIsNotMissing": "a failed read is reported as readable:false with a reason, never as 'not there'",
+    "errorsCarryStage": "every error carries code + stage + the original stack",
+    "adapterConfessesGaps": "a verb the host adapter cannot do returns NOT_WIRED with its phase, never a quiet success",
+    "hostSpecificsAreIsolated": "service names, log layout, rendering rules and message shapes live only under src/adapters/<host>/"
+  },
+  "notes": [
+    "P1.5 delivers the protocol and ONE complete non-host implementation (adapters/memory) that the conformance suite runs against — the decoupling claim is executed, not asserted.",
+    "The write layer (create/inject/trigger) is still P2. The host adapter reports those verbs as unavailable through capabilities and refuses them with NOT_WIRED.",
+    "Mount this bundle BEFORE the plugins that import it: they import it, and Loader ordering is what makes a missing layer a named error instead of a crash.",
+    "No `inject` services: everything is probed at call time, so a profile that only wants the disk reader activates cleanly."
+  ]
+}

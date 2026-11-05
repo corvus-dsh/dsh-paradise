@@ -1,0 +1,47 @@
+{
+  "name": "dsh-paradise",
+  "version": "0.4.0",
+  "description": "DSH 彼岸层 (paradise): the physical layer under the session plugins. Now carries a HOST-NEUTRAL PROTOCOL (SessionAdapter / StorageAdapter / ToolAdapter) and one implementation of it per host under src/adapters/.",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./index.js",
+    "./manifest": "./manifest.json"
+  },
+  "files": [
+    "index.js",
+    "manifest.json",
+    "cordis.patch.yml",
+    "src",
+    "PARADISE_SPEC.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "check": "node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.5",
+    "node": ">=20"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "session",
+    "persistence",
+    "zstd",
+    "adapter",
+    "harness-agnostic"
+  ],
+  "license": "MIT"
+}

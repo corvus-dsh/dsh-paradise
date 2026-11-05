@@ -62,6 +62,8 @@ import {
   REQUIRED_HOST_CAPABILITIES,
 } from './adapters/dsh/assert-capabilities.js'
 import { withLease } from './lease.js'
+import { createMemoryStorageAdapter } from './storage-memory.js'
+import { chooseStorageTier, parseStorageTier, STORAGE_TIERS } from './storage-tiers.js'
 
 /**
  * `verifyDeletion` is exposed under a qualified name because the adapter directory already exports a
@@ -223,6 +225,16 @@ export {
   /** Diagnostics: how many abandoned guards were reclaimed. */
   guardSteals,
   withLease,
+  /**
+   * THE L0/L1 STORAGE TIERS.
+   *
+   * `chooseStorageTier` is the ONE place that decides which engine is live and how a failure degrades, so
+   * plugins do not each re-implement "memory, but fall back to file" and drift.
+   */
+  createMemoryStorageAdapter,
+  chooseStorageTier,
+  parseStorageTier,
+  STORAGE_TIERS,
   defaultLeaseOwner,
   asLeaseRecord,
   leaseStorageKey,

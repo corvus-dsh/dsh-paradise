@@ -161,6 +161,16 @@ export function createDshStorageAdapter(ctx: any, config: { dataDir?: string } =
 
   const adapter: StorageAdapter = {
     name: 'dsh-storage',
+    /**
+     * THIS ADAPTER'S TIER, declared so a caller can report which engine is live without importing a
+     * concrete class.
+     *
+     * `file` is durable on EVERY write (atomic rename + snapshot), and bounded by the filesystem's own
+     * concurrency limits — which is precisely the boundary that motivated the L1 memory tier. A caller
+     * must not change its contract based on this value; it is for diagnostics and for the degradation
+     * path, not for choosing semantics.
+     */
+    tier: 'file',
 
     async read(key: string): Promise<unknown> {
       return readDetailed(key).value

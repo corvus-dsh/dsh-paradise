@@ -238,7 +238,61 @@ export interface StorageAdapter {
     key: string,
     verify: (current: unknown) => unknown | undefined,
   ): Promise<{ ok: boolean; value?: unknown; warnings: string[] }>
+  /**
+   * WHAT THIS ADAPTER IS OPTIMISED FOR — the tier a caller can reason about.
+   *
+   * Optional, and advisory only: a caller must not CHANGE ITS CONTRACT based on this value, because two
+   * adapters of the same tier can still differ (a fast disk versus a network share). It exists so
+   * diagnostics can say which engine is live without the caller importing a concrete class.
+   *
+   *   `file`   — durable on every write, atomic by rename, recovery from a snapshot. Bounded by the
+   *              filesystem's own concurrency limits.
+   *   `memory` — mutexes are ordinary objects, so exclusion costs no I/O; durability is deferred to a
+   *              write-behind flush. Fast under contention, and it SURVIVES the process only as far as
+   *              the last flush.
+   */
+  readonly tier?: 'file' | 'memory'
+  /**
+   * RUN SEVERAL OPERATIONS AS ONE UNIT — atomic with respect to OTHER TRANSACTIONS, and observable
+   * before it commits.
+   *
+   * WHY THIS IS NOT JUST `compareAndSet` IN A LOOP: a caller that needs to read a cursor, decide, write
+   * the cursor and write a record must not let another caller see the half-applied state. CAS gives
+   * per-key atomicity; a transaction gives MULTI-KEY atomicity, which is what a cursor plus its record
+   * actually needs.
+   *
+   * THE GUARANTEE IS DELIBERATELY NARROW, and stated so it cannot be over-read:
+   *   - reads inside see the transaction's own writes (read-your-writes);
+   *   - outside readers see the PREVIOUS state until commit, then all of it;
+   *   - an abort (throw) discards every write;
+   *   - `commit()` returning false means SOMEBODY ELSE WON — the caller must retry, and the writes are
+   *     discarded rather than half-applied.
+   *
+   * A host that cannot provide this omits it, and a caller that needs it must say so — the same rule as
+   * `compareAndSet`.
+   */
+  transaction?<T>(
+    body: (tx: StorageTransaction) => Promise<T> | T,
+    options?: { retries?: number },
+  ): Promise<{ ok: boolean; value?: T; warnings: string[]; error?: { code: string; message: string } }>
 }
+
+/**
+ * THE HANDLE A TRANSACTION BODY RECEIVES.
+ *
+ * A transaction is a STAGING AREA, not a lock held over the store: writes go here first and are published
+ * together at commit. That is what makes the promise "outside readers never see half of it" true without
+ * requiring a global mutex.
+ */
+export interface StorageTransaction {
+  read(key: string): Promise<unknown>
+  write(key: string, value: unknown): Promise<void>
+  remove(key: string): Promise<void>
+  keys(prefix?: string): Promise<string[]>
+  /** Drop every staged write. The body then ends without publishing anything. */
+  abort(): void
+}
+
 
 /**
  * WHAT A READ ACTUALLY FOUND.

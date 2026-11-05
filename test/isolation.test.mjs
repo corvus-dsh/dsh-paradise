@@ -140,6 +140,15 @@ test('isolation: every host-specific file lives under adapters/', () => {
    * beside `policy.ts` and `errors.ts` (layer-level, host-free code), not under a host directory. If it
    * ever needs a host import, this list is where the mistake becomes visible.
    */
+  /**
+   * `storage-memory.ts` / `storage-tiers.ts` (v0.4.2) are on this list for the SAME reason the lease files
+   * are: they name no host. The memory driver is written against `StorageAdapter` — the host-neutral
+   * contract — and is driven by whatever backing adapter the caller supplies, so it works over this
+   * runtime's files AND over the in-memory reference host. `storage-tiers.ts` only chooses between two
+   * protocol implementations.
+   *
+   * The guard below enforces that claim rather than trusting this comment.
+   */
   const allowed = [
     'adapters',
     'protocol',
@@ -150,6 +159,8 @@ test('isolation: every host-specific file lives under adapters/', () => {
     'errors.ts',
     'lease.ts',
     'lease-adapter.ts',
+    'storage-memory.ts',
+    'storage-tiers.ts',
   ]
   const top = readdirSync(srcDir, { withFileTypes: true }).map((entry) => entry.name)
   const unexpected = top.filter((name) => !allowed.includes(name))

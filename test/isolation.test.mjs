@@ -190,6 +190,23 @@ test('isolation: every host-specific file lives under adapters/', () => {
      */
     'emergency-repair.ts',
     'harness.ts',
+    /**
+     * `agent-loop.ts` and `repair-session.ts` — THE FIRE SEED.
+     *
+     * Both are allowed at the top level for the same reason `launcher.ts` is, and the reason the
+     * user's request named explicitly: a repair conversation whose carrier is the host it repairs
+     * is not a repair conversation. These two must be importable on a machine where the host has
+     * never started, which a file under `adapters/<host>/` could not promise.
+     *
+     * `agent-loop.ts` imports only `./protocol/index.js`.
+     * `repair-session.ts` imports only `./agent-loop.js` and `./protocol/index.js`.
+     *
+     * Neither reaches `adapters/dsh/`, which is what the guard below asserts. The moment one of
+     * them does, the "self-repair without the host" claim becomes false — and that claim is the
+     * entire justification for these files existing outside `adapters/`.
+     */
+    'agent-loop.ts',
+    'repair-session.ts',
   ]
   const top = readdirSync(srcDir, { withFileTypes: true }).map((entry) => entry.name)
   const unexpected = top.filter((name) => !allowed.includes(name))

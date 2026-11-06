@@ -404,6 +404,28 @@ export type { HostCapabilities } from './adapters/dsh/capability.js'
 export type { ParadiseStage } from './errors.js'
 
 /**
+ * THE AGENT LOOP — the piece that makes this a harness rather than a library.
+ *
+ * Without it the four repositories could store, slice and observe, but nothing turned a user
+ * sentence into a sequence of tool calls without a HOST driving it. Exported bare, like every
+ * other module here, because this package ships as one inlined bundle.
+ */
+import { createMemoryMessages, runAgentTurn } from './agent-loop.js'
+export { createMemoryMessages, runAgentTurn }
+export type { AgentLoopEvent, AgentLoopOptions, AgentTool, AgentTurnResult } from './agent-loop.js'
+
+/**
+ * THE REPAIR SESSION — self-repair that does not live inside the thing it repairs.
+ *
+ * A supervisor whose repair path runs inside the host dies with the host. This one needs a
+ * terminal: `runRepairSession` plus REAL tools (read/write/run/restart), all paths confined to
+ * the workspace, with `dryRun` for review before trust.
+ */
+import { REPAIR_TOOL_NAMES, joinPath, resolveInside, runRepairSession } from './repair-session.js'
+export { REPAIR_TOOL_NAMES, joinPath, resolveInside, runRepairSession }
+export type { RepairSessionEvent, RepairSessionOptions, RepairSessionResult } from './repair-session.js'
+
+/**
  * Test seam: the write SHAPE functions.
  *
  * These moved here from `dsh-observer/src/core/observer-inject.ts`, together with their tests: a

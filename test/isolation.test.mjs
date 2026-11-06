@@ -161,6 +161,35 @@ test('isolation: every host-specific file lives under adapters/', () => {
     'lease-adapter.ts',
     'storage-memory.ts',
     'storage-tiers.ts',
+    /**
+     * `launcher.ts` — THE DUAL-MODE SUPERVISOR.
+     *
+     * It is allowed at the top level for the SAME reason `lease.ts` and `storage-tiers.ts` are: it
+     * imports the protocol and nothing else. Its single import is
+     * `./protocol/index.js`, verified below — so it carries no host vocabulary, and it must be
+     * importable on a machine that has never seen the host, which a file under `adapters/<host>/`
+     * could not promise.
+     *
+     * THE RULE THIS FILE GUARDS IS UNCHANGED: host specifics stay under `adapters/<host>/`. A
+     * supervisor that would otherwise have to import a host to watch it would be the OPPOSITE of that
+     * rule — it would be a host-specific file masquerading as infrastructure.
+     */
+    'launcher.ts',
+    /**
+     * `emergency-repair.ts` and `harness.ts` — THE ASSEMBLY LAYER.
+     *
+     * Both are allowed at the top level for the same reason `launcher.ts` is: neither imports a host.
+     * `emergency-repair.ts` imports ONLY the protocol (it is a session runner, and a session is a
+     * protocol concept). `harness.ts` imports the protocol, the launcher, the emergency runner and
+     * `adapters/raw/` — never `adapters/dsh/`.
+     *
+     * THE RULE IS UNCHANGED and is asserted below: a file at `src/` top level may reach the protocol,
+     * its own siblings, and the RAW adapters. The moment one of them reaches for `adapters/dsh/`, the
+     * standalone harness stops being standalone — which is the only property that justifies its
+     * existence.
+     */
+    'emergency-repair.ts',
+    'harness.ts',
   ]
   const top = readdirSync(srcDir, { withFileTypes: true }).map((entry) => entry.name)
   const unexpected = top.filter((name) => !allowed.includes(name))
@@ -170,6 +199,60 @@ test('isolation: every host-specific file lives under adapters/', () => {
     `unexpected top-level entries under src/: ${unexpected.join(', ')}. ` +
       'Host specifics belong under adapters/<host>/; nothing else should need a new directory.',
   )
+})
+
+test('isolation: the dual-mode supervisor imports NO host module', () => {
+  /**
+   * THE PERMISSION GRANTED ABOVE, CHECKED AS A FACT RATHER THAN A COMMENT.
+   *
+   * `launcher.ts` was allowed at the top level because it is written against the protocol. That claim
+   * is worth exactly nothing unless something fails when it stops being true — so this test reads the
+   * file and refuses any import that leaves `protocol/`.
+   *
+   * THE FAILURE THIS PREVENTS: a supervisor that imports the host in order to WATCH the host. It looks
+   * reasonable, and it destroys the one property that makes a supervisor useful — being able to run
+   * when the thing it supervises is dead.
+   */
+  const launcher = readFileSync(join(srcDir, 'launcher.ts'), 'utf8')
+  const imports = [...launcher.matchAll(/^import[^\n]*from\s+['"]([^'"]+)['"]/gmu)].map((match) => match[1])
+  const offenders = imports.filter((specifier) => !specifier.startsWith('./protocol/'))
+  assert.deepEqual(
+    offenders,
+    [],
+    'launcher.ts must import only the protocol; a supervisor that needs its host cannot run when the host is down',
+  )
+  assert.ok(imports.length > 0, 'and it must actually import the protocol (an empty import list would pass vacuously)')
+})
+
+test('isolation: the standalone harness never imports the host adapter', () => {
+  /**
+   * THE PERMISSION GRANTED ABOVE, CHECKED AS A FACT.
+   *
+   * `harness.ts` is the file that must run on a machine where the host binary does not exist. If it
+   * imports `adapters/dsh/`, the CLI it produces would fail to load during an outage — the one moment
+   * it is needed. `emergency-repair.ts` is held to the same bar because it runs inside the same bundle.
+   *
+   * THE ALLOWED SET IS EXPLICIT: protocol, siblings at the top level, and `adapters/raw/`. Anything
+   * else — including a future `adapters/<other-host>/` — fails here rather than at 3am.
+   */
+  for (const name of ['harness.ts', 'emergency-repair.ts']) {
+    const source = readFileSync(join(srcDir, name), 'utf8')
+    const imports = [...source.matchAll(/^import[^\n]*from\s+['"]([^'"]+)['"]/gmu)].map((match) => match[1])
+    const offenders = imports.filter((specifier) => {
+      if (specifier.startsWith('node:')) return false
+      if (specifier === './protocol/index.js') return false
+      if (specifier.startsWith('./adapters/raw/')) return false
+      if (/^\.\/[a-z0-9-]+\.js$/u.test(specifier)) return false
+      return true
+    })
+    assert.deepEqual(
+      offenders,
+      [],
+      `${name} imports something a standalone harness cannot have: ${offenders.join(', ')}. ` +
+        'The CLI must load on a machine where the host does not exist.',
+    )
+    assert.ok(imports.length > 0, `${name} must actually import something (an empty list would pass vacuously)`)
+  }
 })
 
 test('isolation: the lease implementation imports NO host module', () => {

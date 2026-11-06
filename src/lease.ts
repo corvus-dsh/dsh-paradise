@@ -44,7 +44,19 @@ const RETRY_INTERVAL_MS = 15
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms)
-    if (typeof (timer as any).unref === 'function') (timer as any).unref()
+    /**
+     * NO `unref()` HERE, and the reason is a real hang this caused.
+     *
+     * `unref()` was added so a waiting retry would not keep the process alive. That is the right instinct
+     * for a timer used on a BACKGROUND path — but this timer is awaited by the CALLER: when the retry loop is
+     * the only thing the event loop still has to do, an unref'd timer lets Node decide there is nothing
+     * pending and exit. The symptom is `Detected unsettled top-level await` and a script that silently stops
+     * in the middle of a concurrent burst — measured here with 20 contenders.
+     *
+     * A plain timer keeps the process alive for at most `waitMs`, which is exactly the interval the caller
+     * asked to wait. That is not a leak; it is the semantics of awaiting.
+     */
+    void timer
   })
 }
 

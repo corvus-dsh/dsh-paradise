@@ -41,6 +41,41 @@ export type {
 export type { LeaseAdapter, LeaseAttempt, LeaseRecord, LeaseRequest } from './lease.js'
 export type { AcquireDecision } from './lease.js'
 
+/**
+ * THE NETWORK TIER — a storage contract that survives a hop between machines.
+ *
+ * Kept in its own module because it answers a DIFFERENT question from `StorageAdapter`: not "can you
+ * store this", but "what can you still promise once a network sits between us". The types are exported
+ * here so a caller importing the barrel sees one vocabulary.
+ */
+export type {
+  NetworkStorageAdapter,
+  NetworkGuarantees,
+  NetworkReadReport,
+  NetworkWriteRequest,
+  NetworkEnvelope,
+} from './network.js'
+
+/**
+ * THE EXOSKELETON — model, message list, and runtime-created tools.
+ *
+ * These answer "how does a thought get produced" and "how does a new capability get created", which
+ * the three container adapters deliberately do not. They are what makes a standalone harness possible
+ * rather than a plugin that can only observe a host's thinking.
+ */
+export type {
+  LLMAdapter,
+  GenerateOptions,
+  GenerationResult,
+  ChatMessage,
+  ToolCall,
+  ToolSchema,
+  MessageAdapter,
+  ToolFactory,
+  RuntimeTool,
+  HarnessBundle,
+} from './harness.js'
+
 import {
   LEASE_RELEASE,
   describeLease,

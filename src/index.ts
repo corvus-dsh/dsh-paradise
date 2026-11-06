@@ -64,6 +64,19 @@ import {
 import { withLease } from './lease.js'
 import { createMemoryStorageAdapter } from './storage-memory.js'
 import { chooseStorageTier, parseStorageTier, STORAGE_TIERS } from './storage-tiers.js'
+import { RAW_ADAPTER_NAME, createRawAdapters, createRawLlm, createRawMessages, createRawToolFactory } from './adapters/raw/index.js'
+import { createBareIgnition } from './adapters/raw/index.js'
+import {
+  defaultRouteConfigPath,
+  isQuotaExhausted,
+  readRouteConfig,
+  resolveFallbackRoute,
+  rewriteRouteConfig,
+  routeConfigExists,
+} from './adapters/raw/index.js'
+import { REPAIR_PROMPT, createLauncher } from './launcher.js'
+import { connectNetworkNode, startNetworkNode } from './adapters/http/network-storage.js'
+import type { NetworkClientOptions, NetworkServer, NetworkServerOptions } from './adapters/http/network-storage.js'
 
 /**
  * `verifyDeletion` is exposed under a qualified name because the adapter directory already exports a
@@ -180,6 +193,19 @@ export {
   isParadiseHost,
   /* adapters */
   createDshAdapters,
+  /**
+   * THE NEUTRAL NAME FOR THE SAME FUNCTION.
+   *
+   * WHY IT EXISTS: a functional layer that only depends on the CONTRACT must not have to write a host's name
+   * in its own type definitions. `dsh-graft-slice`'s bridge declared `createDshAdapters(ctx)` in its
+   * interface, which means that plugin's source named a runtime it is supposed to be independent of — the
+   * precise coupling the protocol layer exists to remove.
+   *
+   * `createAdapters` is the same function under a name that says what it does rather than which runtime it
+   * targets. The old name stays exported because it is already referenced by the plugins and their tests;
+   * removing it would be a breaking change dressed as tidying.
+   */
+  createDshAdapters as createAdapters,
   createMemoryHost,
   DSH_ADAPTER_NAME,
   /* read (host-neutral) */
@@ -238,6 +264,49 @@ export {
   defaultLeaseOwner,
   asLeaseRecord,
   leaseStorageKey,
+  /**
+   * THE RAW (HOST-FREE) ADAPTERS.
+   *
+   * Shipped values, not types: a launcher must be able to build a bare-mode bundle without importing a
+   * host directory. `RAW_ADAPTER_NAME` is exported so a log says which bundle is live.
+   */
+  RAW_ADAPTER_NAME,
+  createRawAdapters,
+  createRawLlm,
+  createRawMessages,
+  createRawToolFactory,
+  /**
+   * THE BARE-METAL TRIGGER — "make this session start working" without a host.
+   *
+   * A migrator on a bare machine asks the layer for `binding.triggers`; this is what a deployment puts
+   * there. Without it the migrator correctly reports `TRIGGER_UNAVAILABLE` — which is honest, and is not
+   * the same as working.
+   */
+  createBareIgnition,
+  /** The dual-mode supervisor and the prompt its repairs are built from. */
+  createLauncher,
+  REPAIR_PROMPT,
+  /**
+   * THE NETWORK TIER, IMPLEMENTED — two HTTP endpoints and a client.
+   *
+   * Shipped values rather than types, for the same reason the raw adapters are: a caller that wants to
+   * prove the network contract carries across a socket must be able to START a node, not merely describe
+   * one.
+   */
+  startNetworkNode,
+  connectNetworkNode,
+  /**
+   * ROUTE HIJACKING — the pieces a caller needs to swap an exhausted key without a restart.
+   *
+   * `isQuotaExhausted` is exported so a caller can classify a failure the same way the adapter does,
+   * instead of re-implementing the "429 or a quota body" rule and drifting from it.
+   */
+  isQuotaExhausted,
+  defaultRouteConfigPath,
+  readRouteConfig,
+  resolveFallbackRoute,
+  rewriteRouteConfig,
+  routeConfigExists,
 }
 
 export type {
@@ -271,9 +340,29 @@ export type {
   LeaseAttempt,
   LeaseRecord,
   LeaseRequest,
+  /* the network tier — the storage contract that survives a hop between machines */
+  NetworkStorageAdapter,
+  NetworkGuarantees,
+  NetworkReadReport,
+  NetworkWriteRequest,
+  NetworkEnvelope,
+  /* the exoskeleton — what a standalone harness needs beyond a container */
+  LLMAdapter,
+  GenerateOptions,
+  GenerationResult,
+  ChatMessage,
+  ToolCall,
+  ToolSchema,
+  MessageAdapter,
+  ToolFactory,
+  RuntimeTool,
+  HarnessBundle,
 } from './protocol/index.js'
 
 export type { WithLeaseResult } from './lease.js'
+export type { NetworkClientOptions, NetworkServer, NetworkServerOptions } from './adapters/http/network-storage.js'
+export type { ResolvedRoute, RouteConfig } from './adapters/raw/route-config.js'
+export type { IgnitionOptions, IgnitionReceipt, IgnitionSession, IgnitionTriggerInput } from './adapters/raw/ignition.js'
 
 import { LEASE_RELEASE, describeLease, isLeaseExpired, leaseOwnedBy } from './protocol/lease.js'
 /** Bare, for the same reason as every other re-export here: this package ships as one inlined bundle. */

@@ -74,7 +74,31 @@ function orderModules(srcDir) {
 function inline(file) {
   const source = readFileSync(file, 'utf8')
   const code = stripTypeScriptTypes(removeLocalImports(source), { mode: 'strip' })
-  return code.replace(/^export\s+/gmu, '').trim()
+  /**
+   * A MULTI-LINE `export { … }` BECOMES A NAKED BLOCK IF ONLY THE KEYWORD IS REMOVED.
+   *
+   * WHY THIS USED TO BREAK, AND WHY THE BUILD DID NOT NOTICE:
+   *
+   *     export {
+   *       createFirewall,
+   *     }
+   *
+   * `replace(/^export\s+/gmu, '')` turns that into
+   *
+   *     {
+   *       createFirewall,
+   *     }
+   *
+   * which is a BLOCK STATEMENT containing a label — valid syntax right up until the trailing `}` closes
+   * something it never opened, or until a second one follows. The composer's guard only looks for surviving
+   * RELATIVE SPECIFIERS, so the artifact shipped and failed at `import()` time instead of at build time.
+   *
+   * THE FIX removes a bare re-export LIST entirely (its names are already in scope, because the module was
+   * imported at the top of the file by the author). It is anchored to a line that STARTS with `export` and
+   * a brace, and requires the list to be balanced — so a `export const x = {` is untouched.
+   */
+  const withoutBareReExportList = code.replace(/^export\s*\{[^}]*\}\s*;?[ \t]*\n/gmu, '')
+  return withoutBareReExportList.replace(/^export\s+/gmu, '').trim()
 }
 
 const NODE_IMPORT = /^import\s*\{([^}]*)\}\s*from\s*'(node:[^']+)'\s*;?[ \t]*\n?/gmu
@@ -127,6 +151,29 @@ export function composeBundle(root) {
       )
     }
   }
+
+  /**
+   * THE SYNTAX GATE — added after a real incident.
+   *
+   * A multi-line bare re-export used to be inlined into a naked `{ … }` block. The artifact then failed at
+   * `import()` time with `SyntaxError: Unexpected token '}'` — i.e. after `npm run build` had printed
+   * "built", and only when something tried to load the package.
+   *
+   * A BUILD THAT PRODUCES AN UNPARSEABLE FILE HAS NOT SUCCEEDED. The check below is a SHAPE test, not a
+   * parser: a block whose whole body is a comma-separated identifier list is the fingerprint of a
+   * de-exported re-export list, and that shape cannot occur in hand-written code in this package.
+   */
+  const bannedBlock = /^\{[ \t]*\r?\n(?:[ \t]*[A-Za-z_$][\w$]*[ \t]*,?[ \t]*\r?\n)+[ \t]*\}[ \t]*$/mu
+  if (bannedBlock.test(output)) {
+    const match = bannedBlock.exec(output)
+    const line = output.slice(0, match.index).split('\n').length
+    throw new Error(
+      `bundle contains a NAKED BLOCK that is a de-exported re-export list (line ${line}).\n` +
+        'The inliner must REMOVE a multi-line `export { … }`, not strip its keyword and leave a block.\n' +
+        `Offending block:\n${match[0]}`,
+    )
+  }
+
   return { output, modules: names }
 }
 

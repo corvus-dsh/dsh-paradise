@@ -36,6 +36,16 @@ import { createRawToolFactory } from './tools.js'
 import type { RawToolFactoryOptions } from './tools.js'
 import { createBareIgnition } from './ignition.js'
 import type { IgnitionOptions, IgnitionReceipt, IgnitionSession, IgnitionTriggerInput } from './ignition.js'
+import {
+  UNTRUSTED_CLOSE,
+  UNTRUSTED_OPEN,
+  UNTRUSTED_PREAMBLE,
+  createActionGuard,
+  createEnforcingFirewall,
+  createFirewall,
+  createInjectionShield,
+  createNonEnforcingFirewall,
+} from './firewall.js'
 import type { HarnessBundle, LLMAdapter, MessageAdapter, ToolFactory } from '../../protocol/index.js'
 
 /** The bundle's name, used in logs and receipts. */
@@ -73,6 +83,24 @@ export type { ToolRunner } from './llm.js'
  * convert.
  */
 export type { IgnitionOptions, IgnitionReceipt, IgnitionSession, IgnitionTriggerInput }
+
+/**
+ * THE ZERO-TRUST FIREWALL — shipped implementations.
+ *
+ * `createEnforcingFirewall` is what a deployment uses; `createNonEnforcingFirewall` exists so that
+ * choosing NOT to screen is a value a diagnostic can report, rather than an `undefined` somebody forgets
+ * to check.
+ */
+export {
+  UNTRUSTED_CLOSE,
+  UNTRUSTED_OPEN,
+  UNTRUSTED_PREAMBLE,
+  createActionGuard,
+  createEnforcingFirewall,
+  createFirewall,
+  createInjectionShield,
+  createNonEnforcingFirewall,
+}
 /**
  * ROUTE CONFIGURATION — the durability half of route hijacking.
  *

@@ -91,9 +91,69 @@ test('purity: the protocol exports no value that could construct a host artifact
   /**
    * A protocol module exporting `buildTape`, `skeleton` or `fabricateTurnPair` would let a caller
    * depend on one host's writing shape while believing it depends on the interface. Only the barrel
-   * may export VALUES, and only `bindHost` / `isParadiseHost` / `ProtocolError`.
+   * may export VALUES, and only the ones on the allow-list below.
+   *
+   * ══ THE BLIND SPOT THIS TEST USED TO HAVE, AND WHY IT IS WORTH RECORDING ══
+   *
+   * The first version matched ONLY `^export const|function|class`. It therefore did not see
+   *
+   *     export { TRUST_ORDER } from './firewall.js'
+   *
+   * at all — a value export that went straight past the gate. The gate still PASSED, which is the worst
+   * possible outcome: a check that cannot see the thing it exists to check.
+   *
+   * The pattern now also matches `export { a, b } from`, bare `export { a, b }`, and `export * `. A gate
+   * with a hole is worse than no gate, because it certifies.
    */
   const indexSource = readFileSync(join(protocolDir, 'index.ts'), 'utf8')
-  const valueExports = [...indexSource.matchAll(/^export (?:class|function|const) (\w+)/gmu)].map((match) => match[1])
-  assert.deepEqual(valueExports.sort(), ['ProtocolError', 'bindHost', 'isParadiseHost'])
+
+  /** Plain JS — this file is `.mjs`, so no TypeScript annotations (the first version had one and would not parse). */
+  const named = []
+  /** `export const|let|function|class|enum NAME` */
+  for (const decl of indexSource.matchAll(/^export\s+(?:const|let|function|class|enum)\s+(\w+)/gmu)) named.push(decl[1])
+  /** `export { a, b as c }` and `export { a } from './x.js'` — the form that used to be invisible. */
+  for (const group of indexSource.matchAll(/^export\s*\{([^}]*)\}(?:\s*from\s*['"][^'"]+['"])?/gmu)) {
+    for (const part of group[1].split(',')) {
+      const name = part.trim().split(/\s+as\s+/u).pop()?.trim()
+      if (name !== undefined && name.length > 0 && name !== 'type') named.push(name)
+    }
+  }
+  /** `export * from './x.js'` would export an unknown set — refuse outright rather than guess. */
+  assert.equal(/^export\s+\*/mu.test(indexSource), false, 'the protocol barrel must not star-export: the gate cannot enumerate what escapes')
+
+  /**
+   * THE ALLOW-LIST, with the reason each entry is permitted. A protocol that can carry a VALUE is a
+   * protocol a caller can depend on at runtime; each one has to earn it.
+   */
+  const allowed = [
+    'ProtocolError', // the protocol's own error: a class is needed to `instanceof` it
+    'bindHost',      // the one function every caller uses to bind a host
+    'isParadiseHost', // structural check, so a host can be validated without importing a class
+    'LEASE_RELEASE', // a SENTINEL the lease contract requires callers to compare against
+    'describeLease', // pure formatting of a lease record
+    'isLeaseExpired', // pure predicate on a lease record
+    'leaseOwnedBy',  // pure predicate on a lease record
+    'planAcquire',   // pure decision function; no I/O, no host
+    'planRelease',   // pure decision function
+    'planRenew',     // pure decision function
+    /**
+     * `TRUST_ORDER` — the firewall's ordered trust scale.
+     *
+     * IS IT HARMLESS? It is a frozen map of five origin names to integers. It constructs nothing, touches
+     * no host, and its whole purpose is to be COMPARED (`TRUST_ORDER[a] > TRUST_ORDER[b]`), which a
+     * caller cannot do through a type. Permitted, and listed here so the decision is reviewable rather
+     * than implied by a regex gap.
+     */
+    'TRUST_ORDER',
+  ]
+  const offenders = named.filter((name) => !allowed.includes(name))
+  assert.deepEqual(
+    offenders.sort(),
+    [],
+    'the protocol barrel exports a value outside the allow-list. If it is genuinely harmless, add it with a ' +
+      'reason; if it can construct a host artifact, it belongs in an adapter.',
+  )
+
+  /** The check must not pass vacuously: the barrel does export values, and the gate sees them. */
+  assert.ok(named.length >= 3, `the value-export scan found ${named.length} names — it may be broken`)
 })

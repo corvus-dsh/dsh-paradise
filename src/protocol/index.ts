@@ -76,6 +76,39 @@ export type {
   HarnessBundle,
 } from './harness.js'
 
+/**
+ * THE ZERO-TRUST FIREWALL — where untrusted text becomes safe-to-place.
+ *
+ * These are TYPES ONLY: this module defines what a verdict looks like, so an implementation cannot quietly
+ * answer "fine" to everything. The value exports live at the package root, next to the other adapters.
+ */
+export type {
+  TrustOrigin,
+  InjectionVerdict,
+  SanitizeAction,
+  SanitizeVerdict,
+  FirewallAdapter,
+  InjectionShield,
+  ActionPolicy,
+  ActionVerdict,
+  ActionGuard,
+  FirewallAuditEntry,
+  FirewallInstallation,
+} from './firewall.js'
+/**
+ * `TRUST_ORDER` IS A VALUE, so it is imported and re-exported BARE.
+ *
+ * A re-export that names a relative source survives into the single-file bundle as a relative specifier and
+ * fails at import time — the composer refuses it. This is the THIRD time this shape has been caught in this
+ * package, which is the strongest argument for the guard existing.
+ *
+ * NOTE FOR THE NEXT READER: the guard scans LINES, so writing the offending syntax inside a comment also
+ * trips it. That is a false positive, and it is a cheap one to live with — the alternative (a smarter guard
+ * that skips comments) is a guard that can be defeated by a comment-shaped edge case.
+ */
+import { TRUST_ORDER } from './firewall.js'
+export { TRUST_ORDER }
+
 import {
   LEASE_RELEASE,
   describeLease,

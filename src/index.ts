@@ -67,6 +67,21 @@ import { chooseStorageTier, parseStorageTier, STORAGE_TIERS } from './storage-ti
 import { RAW_ADAPTER_NAME, createRawAdapters, createRawLlm, createRawMessages, createRawToolFactory } from './adapters/raw/index.js'
 import { createBareIgnition } from './adapters/raw/index.js'
 import {
+  createActionGuard,
+  createEnforcingFirewall,
+  createFirewall,
+  createInjectionShield,
+  createNonEnforcingFirewall,
+  UNTRUSTED_CLOSE,
+  UNTRUSTED_OPEN,
+  UNTRUSTED_PREAMBLE,
+} from './adapters/raw/index.js'
+/**
+ * THE TRUST SCALE is a value a CALLER compares against (`TRUST_ORDER[a] > TRUST_ORDER[b]`), which a type
+ * cannot express. Re-exported here so a deployment does not have to reach into `protocol/` for it.
+ */
+import { TRUST_ORDER } from './protocol/firewall.js'
+import {
   defaultRouteConfigPath,
   isQuotaExhausted,
   readRouteConfig,
@@ -283,6 +298,22 @@ export {
    * the same as working.
    */
   createBareIgnition,
+  /**
+   * THE ZERO-TRUST FIREWALL.
+   *
+   * `createEnforcingFirewall()` is the one a deployment should install. The non-enforcing variant is
+   * exported on purpose: a caller that declines to screen must be able to SAY so, and a diagnostic that
+   * cannot distinguish "clean" from "never looked" is worse than no firewall.
+   */
+  createEnforcingFirewall,
+  createNonEnforcingFirewall,
+  createFirewall,
+  createInjectionShield,
+  createActionGuard,
+  UNTRUSTED_OPEN,
+  UNTRUSTED_CLOSE,
+  UNTRUSTED_PREAMBLE,
+  TRUST_ORDER,
   /** The dual-mode supervisor and the prompt its repairs are built from. */
   createLauncher,
   REPAIR_PROMPT,

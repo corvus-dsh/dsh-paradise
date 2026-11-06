@@ -1,4 +1,4 @@
-// dsh-paradise — insert the layer row.
+# dsh-paradise — insert the layer row.
 #
 # The layer registers no tools and serves no client half, so the patch is ONE insert with no config.
 # It is mounted as its own bundle entry so the Loader can verify its presence and version BEFORE the

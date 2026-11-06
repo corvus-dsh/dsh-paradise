@@ -154,8 +154,8 @@ function opaqueId(prefix        , counter        )         {
  *
  * THE ESCAPING IS MEASURED, NOT GUESSED
  *
- *   `D:\持久层能力架构` → `--D-~6301~4E45~5C42~80FD~529B~67B6~6784--`
- *   `D:\软件开发`        → `--D-~8F6F~4EF6~5F00~53D1--`
+ *   `D:\workspace` → `--D-~6301~4E45~5C42~80FD~529B~67B6~6784--`
+ *   `D:\sample-cjk`        → `--D-~8F6F~4EF6~5F00~53D1--`
  *
  * Both were read off this machine's real sessions root and matched against the headers inside. A
  * wrong guess here produces a plausible-looking path that reads nothing, which is worse than saying

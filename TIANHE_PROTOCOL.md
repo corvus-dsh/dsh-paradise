@@ -54,13 +54,13 @@
   },
 
   "payload": {
-    "sessionIds": ["auto-graft-mw3ob7d3-rzsy6u"],
+    "sessionIds": ["session-<example-id>"],
     "options": { "maxPerSession": 3 }
   },
 
   "dependsOn": ["tkt-a1b2c3d4"],
 
-  "workspace": "D:\\持久层能力架构",
+  "workspace": "D:\\workspace",
   "idempotencyKey": "harvest:2026-11-06:batch-17",
 
   "origin": {

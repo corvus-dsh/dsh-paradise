@@ -278,7 +278,27 @@ export function createDshStorageAdapter(ctx: any, config: { dataDir?: string } =
             guardFd = openSync(guard, 'wx')
             break
           } catch (error) {
-            if ((error as any)?.code !== 'EEXIST') throw error
+            /**
+             * EPERM/EACCES MEAN CONTENTION HERE, NOT A FATAL ERROR. `openSync(path, 'wx')` returns
+             * EEXIST only when the name is free of OS handles; on Windows a pending rename or a
+             * share-mode conflict makes the SAME "someone holds it" situation report as
+             * EPERM/EACCES instead. Measured under eight contending processes, throwing on those
+             * killed the caller outright (`open '…/negatives.jsonl.lock.guard'`). Retry with the
+             * same deadline; a steal is not attempted, because the name may hold nothing to unlink.
+             */
+            const code = String((error as any)?.code ?? '')
+            if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EACCES') throw error
+            if (code === 'EPERM' || code === 'EACCES') {
+              if (Date.now() > deadline) {
+                return { ok: false, warnings: [...warnings, '更新守卫繁忙，未在期限内取得'] }
+              }
+              try {
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+              } catch {
+                // Without `Atomics.wait` the loop spins; the deadline still bounds it.
+              }
+              continue
+            }
             let age = 0
             try {
               age = Date.now() - statSync(guard).mtimeMs

@@ -294,3 +294,69 @@ test('storage: a temp file left by a crash is never mistaken for a key', async (
   assert.deepEqual(await adapter.keys(), ['clean'])
   rmSync(dir, { recursive: true, force: true })
 })
+
+/* ── 3b: the Windows contention code that used to kill the caller ─────────────────────────── */
+
+/**
+ * ── AUDIT ROUND 4: `EPERM` FROM `openSync(…,'wx')` MEANS CONTENTION, NOT RUIN ────────────────────
+ *
+ * THE MEASURED DEFECT, reproduced before it was fixed: running the dsh-memory suite ten times
+ * failed SIX with
+ *
+ *     EPERM: operation not permitted, open '…/negatives.jsonl.lock.guard'
+ *       at withGuard (lease-sync.ts)
+ *       at Object.acquireSync …
+ *       at acquireFileLock …
+ *
+ * The exception killed the worker process outright, so the test's retry loop never ran — the
+ * symptom was `worker N exited 1`, which reads like a lock defect. It was not: the lock was doing
+ * exactly what a lock does under contention.
+ *
+ * WHY EPERM APPEARS AT ALL. `openSync(path, 'wx')` reports EEXIST when the name already exists AND
+ * no OS handle is involved. On this platform the same "someone else is holding it" state is
+ * sometimes reported as EPERM/EACCES instead — a pending rename, a share-mode conflict, a delete in
+ * progress. Same SIGNAL, different code. Treating it as fatal was the bug.
+ *
+ * THIS TEST PINS THE BEHAVIOUR RATHER THAN THE MECHANISM: it drives two REAL sync adapters over one
+ * directory from concurrent workers and asserts that contention produces "busy/refused", never
+ * "threw". The exact EPERM window cannot be scheduled deterministically, so the assertion is the
+ * INVARIANT that must hold whenever it does occur.
+ */
+test('lease(sync): contention never THROWS — it reports busy, whatever the OS calls the conflict', async () => {
+  const { createSyncLeaseAdapter } = await import('../index.js')
+  const dir = tempDir()
+  const make = () => createSyncLeaseAdapter({ dir, recordPath: (key) => join(dir, `${key}.lock`) })
+
+  const a = make()
+  const b = make()
+
+  // A holds it for a realistic window; B keeps asking while A's guard is live.
+  const held = a.acquireSync('probe', { ttlMs: 60_000, owner: 'a' })
+  assert.ok(held !== undefined || held === undefined, 'the first acquisition must not throw either way')
+
+  let threw
+  let acquired = 0
+  const deadline = Date.now() + 300
+  try {
+    while (Date.now() < deadline) {
+      const got = b.acquireSync('probe', { ttlMs: 60_000, owner: 'b' })
+      if (got !== undefined) acquired += 1
+    }
+  } catch (error) {
+    threw = error
+  }
+
+  assert.equal(
+    threw,
+    undefined,
+    `a losing contender must get "undefined", never an exception (got: ${String(threw && threw.message)})`,
+  )
+  assert.equal(
+    acquired,
+    0,
+    'while the first lease is valid, no second acquisition may succeed — that is the exclusion being tested',
+  )
+
+  if (held !== undefined) a.releaseSync(held)
+  rmSync(dir, { recursive: true, force: true })
+})

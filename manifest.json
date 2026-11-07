@@ -1,6 +1,6 @@
 {
   "name": "@corvus-dsh/dsh-paradise",
-  "version": "2.2.0",
+  "version": "0.9.0-beta.1",
   "description": "DSH 彼岸层 (paradise). P1: the read layer (frame-by-frame log decoding). P1.5: a HOST-NEUTRAL PROTOCOL — SessionAdapter / StorageAdapter / ToolAdapter — plus one implementation per host under src/adapters/.",
   "entry": "index.js",
   "activate": "activate(ctx, config)",

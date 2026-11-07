@@ -4640,7 +4640,27 @@ function createDshStorageAdapter(ctx     , config                       = {})   
             guardFd = openSync(guard, 'wx')
             break
           } catch (error) {
-            if ((error       )?.code !== 'EEXIST') throw error
+            /**
+             * EPERM/EACCES MEAN CONTENTION HERE, NOT A FATAL ERROR. `openSync(path, 'wx')` returns
+             * EEXIST only when the name is free of OS handles; on Windows a pending rename or a
+             * share-mode conflict makes the SAME "someone holds it" situation report as
+             * EPERM/EACCES instead. Measured under eight contending processes, throwing on those
+             * killed the caller outright (`open '…/negatives.jsonl.lock.guard'`). Retry with the
+             * same deadline; a steal is not attempted, because the name may hold nothing to unlink.
+             */
+            const code = String((error       )?.code ?? '')
+            if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EACCES') throw error
+            if (code === 'EPERM' || code === 'EACCES') {
+              if (Date.now() > deadline) {
+                return { ok: false, warnings: [...warnings, '更新守卫繁忙，未在期限内取得'] }
+              }
+              try {
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5)
+              } catch {
+                // Without `Atomics.wait` the loop spins; the deadline still bounds it.
+              }
+              continue
+            }
             let age = 0
             try {
               age = Date.now() - statSync(guard).mtimeMs
@@ -5801,7 +5821,39 @@ function createSyncLeaseAdapter(options                  )               {
         }
         break
       } catch (error) {
-        if ((error       )?.code !== 'EEXIST') throw error
+        /**
+         * ── EPERM/EACCES ARE "SOMEONE HOLDS IT", NOT "SOMETHING BROKE" ────────────────────────────
+         *
+         * MEASURED FAILURE (this is a real, reproduced defect, not a theoretical one). Eight processes
+         * contending for one lease under the full dsh-memory suite failed 6 runs in 10 with:
+         *
+         *     EPERM: operation not permitted, open '…/negatives.jsonl.lock.guard'
+         *       at withGuard (lease-sync.ts)
+         *       at Object.acquireSync …
+         *       at acquireFileLock …
+         *
+         * The throw killed the worker process, so the test's own retry loop never got a chance to
+         * retry — the failure surfaced as `worker N exited 1`, and it read like a lock defect.
+         *
+         * WHY EPERM HAPPENS AT ALL: `openSync(path, 'wx')` fails with EEXIST only when the name is
+         * free of OS-level handles. On Windows the name can be MOMENTARILY unopenable for reasons
+         * that mean "another process is touching this right now": a pending rename, a share-mode
+         * conflict, or a delete in progress. The file system returns EPERM/EACCES for those. They are
+         * the same SIGNAL as EEXIST — contention — but a different code.
+         *
+         * Treating them as fatal was the bug. They are retried exactly like EEXIST, and the reason is
+         * recorded so the distinction is not lost:
+         *   EEXIST  -> the guard exists; wait or steal by age
+         *   EPERM   -> the name is contested; wait (it cannot be STOLEN, because there may be nothing
+         *              there to unlink — a failed steal is just another spin)
+         */
+        const code = String((error       )?.code ?? '')
+        if (code === 'EPERM' || code === 'EACCES') {
+          if (Date.now() > deadline) return { acquired: false, reason: 'BUSY' }
+          sleepSync(2)
+          continue
+        }
+        if (code !== 'EEXIST') throw error
         let age = 0
         try {
           age = Date.now() - statSync(guard).mtimeMs
@@ -12677,7 +12729,7 @@ function createHarnessServer(options                      ) {
 const verifySessionDeletion = verifyDeletion
 
 /** Version probe, printed at import time so the host log proves which copy is live. */
-export const VERSION = '2.2.0'
+export const VERSION = '0.9.0-beta.1'
 /**
  * v2.1.0: the npm name is scoped. The registry rejects the bare name, and a host log that prints a
  * name the registry does not know makes "which copy is live" unanswerable — so this follows it.

@@ -245,7 +245,39 @@ export function createSyncLeaseAdapter(options: SyncLeaseOptions): LeaseAdapter 
         }
         break
       } catch (error) {
-        if ((error as any)?.code !== 'EEXIST') throw error
+        /**
+         * ── EPERM/EACCES ARE "SOMEONE HOLDS IT", NOT "SOMETHING BROKE" ────────────────────────────
+         *
+         * MEASURED FAILURE (this is a real, reproduced defect, not a theoretical one). Eight processes
+         * contending for one lease under the full dsh-memory suite failed 6 runs in 10 with:
+         *
+         *     EPERM: operation not permitted, open '…/negatives.jsonl.lock.guard'
+         *       at withGuard (lease-sync.ts)
+         *       at Object.acquireSync …
+         *       at acquireFileLock …
+         *
+         * The throw killed the worker process, so the test's own retry loop never got a chance to
+         * retry — the failure surfaced as `worker N exited 1`, and it read like a lock defect.
+         *
+         * WHY EPERM HAPPENS AT ALL: `openSync(path, 'wx')` fails with EEXIST only when the name is
+         * free of OS-level handles. On Windows the name can be MOMENTARILY unopenable for reasons
+         * that mean "another process is touching this right now": a pending rename, a share-mode
+         * conflict, or a delete in progress. The file system returns EPERM/EACCES for those. They are
+         * the same SIGNAL as EEXIST — contention — but a different code.
+         *
+         * Treating them as fatal was the bug. They are retried exactly like EEXIST, and the reason is
+         * recorded so the distinction is not lost:
+         *   EEXIST  -> the guard exists; wait or steal by age
+         *   EPERM   -> the name is contested; wait (it cannot be STOLEN, because there may be nothing
+         *              there to unlink — a failed steal is just another spin)
+         */
+        const code = String((error as any)?.code ?? '')
+        if (code === 'EPERM' || code === 'EACCES') {
+          if (Date.now() > deadline) return { acquired: false, reason: 'BUSY' }
+          sleepSync(2)
+          continue
+        }
+        if (code !== 'EEXIST') throw error
         let age = 0
         try {
           age = Date.now() - statSync(guard).mtimeMs

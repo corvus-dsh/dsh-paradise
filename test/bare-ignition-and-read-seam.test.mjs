@@ -22,12 +22,29 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const paradiseUrl = new URL('../index.js', import.meta.url).href
+const observerEntry = join(import.meta.dirname, '..', '..', 'dsh-observer', 'index.js')
 const observerUrl = new URL('../../dsh-observer/index.js', import.meta.url).href
+
+/**
+ * ── THE OBSERVER SEAM LIVES IN A SIBLING REPO, AND CI DOES NOT HAVE IT ──────────────────────
+ *
+ * Case 4/5 below import `dsh-observer/index.js` to prove its read seam works. In this workspace the
+ * repo sits beside this one; in CI only `corvus-dsh/dsh-paradise` is checked out, so the import fails
+ * with `ERR_MODULE_NOT_FOUND` — the same shape of failure as `host-independence-seams.test.mjs`.
+ *
+ * The cases that stand on their own (bare ignition is entirely inside this package) still run. Only
+ * the two that need the sibling are skipped, and the reason names the missing repo — a silent pass
+ * would claim the seam is verified when nothing was verified, which is the one outcome worse than a
+ * skip.
+ */
+const observerSkip = existsSync(observerEntry)
+  ? false
+  : 'sibling repo not checked out: dsh-observer — this seam is verified when the full workspace is present'
 
 /** An in-memory session: a list of typed events, plus the two verbs the igniter needs. */
 function memorySession(initial) {
@@ -150,7 +167,7 @@ test('ignition: an EMPTY answer is refused rather than written as a blank messag
  * THE READ SEAM
  * ═══════════════════════════════════════════════════════════════════════════════════════════ */
 
-test('observer: the read seam is exported, absent by default, and wins when installed', async () => {
+test('observer: the read seam is exported, absent by default, and wins when installed', { skip: observerSkip }, async () => {
   const observer = await import(observerUrl)
   const internals = observer.diskLogInternals
   assert.equal(typeof internals.setSessionLogReader, 'function')
@@ -199,7 +216,7 @@ test('observer: the read seam is exported, absent by default, and wins when inst
   assert.equal(internals.hasSessionLogReader(), false, 'clearing restores the host path')
 })
 
-test('observer: an absent session is a report, not an exception', async () => {
+test('observer: an absent session is a report, not an exception', { skip: observerSkip }, async () => {
   const observer = await import(observerUrl)
   const internals = observer.diskLogInternals
   internals.setSessionLogReader({

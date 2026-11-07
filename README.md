@@ -1,5 +1,284 @@
 # dsh-paradise — 彼岸层
 
+<!-- INSTALL:BEGIN -->
+## 安装
+
+> 所有四个包都**没有发布到 npm**，且 npm 上的裸名 `dsh-memory` / `dsh-observer` 已被他人占用。
+> 因此统一使用 **GitHub 直装**——这是目前唯一可靠的安装方式。
+
+## 一键安装四个包
+
+```bash
+dsh plugin add github:corvus-dsh/dsh-paradise
+dsh plugin add github:corvus-dsh/dsh-memory
+dsh plugin add github:corvus-dsh/dsh-graft-slice
+dsh plugin add github:corvus-dsh/dsh-observer
+```
+
+**顺序有意义**：`dsh-paradise` 是内核，其余三个都依赖它提供的协议。先装内核，后装业务插件。
+
+## 装完确认
+
+```bash
+dsh plugin list
+```
+
+应该看到四行，`fiberPhase` 都是 `active`：
+
+```
+include:dsh-paradise       dsh-paradise        active
+include:dsh-graft-slice    dsh-graft-slice     active
+include:dsh-memory         dsh-memory          active
+include:dsh-observer       dsh-observer        active
+```
+
+如果某个是 `null` 或显示「异常」，看宿主日志里该包的启动错误——最常见的原因是 Node 版本低于 22.5。
+
+## 卸载
+
+```bash
+dsh plugin remove dsh-observer
+dsh plugin remove dsh-graft-slice
+dsh plugin remove dsh-memory
+dsh plugin remove dsh-paradise
+```
+
+## 从源码运行（不装插件）
+
+如果只是想跑独立宿主和 Web UI，不需要 DSH：
+
+```bash
+git clone https://github.com/corvus-dsh/dsh-paradise
+cd dsh-paradise
+node dist/harness-server.js
+# 浏览器打开 http://127.0.0.1:38080
+```
+
+详见《星火 OS 独立运行指南》。
+
+## 要求
+
+| 项 | 版本 |
+|---|---|
+| Node | ≥ 22.5.0（`node:sqlite` 需要） |
+| DSH | ≥ 0.2.1-rc.5 |
+| 外部依赖 | **零**。全部只用 Node 内置模块 |
+
+## 为什么不用 npm
+
+npm 上的 `dsh-memory` 和 `dsh-observer` 这两个名字已被第三方注册，包内容与我们无关。
+我们不愿为一个名字支付赎金，也不愿让用户装到别人的包，所以改用了作用域命名
+（`@corvus-dsh/*`）并主推 GitHub 直装。
+
+等 `@corvus-dsh` 作用域下的包正式发版后，`npm install @corvus-dsh/dsh-memory`
+也会可用，但**GitHub 直装始终是更稳妥的方式**——它直接取仓库当前状态，
+不经过 npm 的发布延迟。
+<!-- INSTALL:END -->
+
+<!-- HOST:GUIDE:BEGIN -->
+## 星火 OS 独立宿主与看门狗
+
+> 本节回答：怎么把彼岸层当宿主用，怎么让它自己发现崩溃并自愈，以及没有模型 Key 时它还能做什么。
+
+---
+
+## 一、独立宿主：`node dist/harness-server.js`
+
+**这是完全脱离 DSH 桌面端的运行方式。** 一条命令启动宿主和 Web 界面。
+
+```bash
+cd dsh-paradise
+node dist/harness-server.js
+```
+
+然后浏览器打开 **http://127.0.0.1:38080**
+
+### 能做什么
+
+| 区域 | 内容 |
+|---|---|
+| 侧边栏 | 节点列表（状态、消息数、token 数），点击切换 |
+| 主聊天区 | 与选中节点对话，气泡按角色着色 |
+| 状态面板 | 模型状态、节点统计、软接管次数、记忆库四层计数、工单 |
+| 宿主守护 | 看门狗是否运行、DSH 存活状态、崩溃原因与日志路径 |
+
+### 三个按钮
+
+- **+ 新节点**：建一个空白节点
+- **建 3 节点**：一键创建 策划 / 开发 / 测试，各带独立 system prompt，同时生成 3 张工单
+- **一键提炼记忆**：对历史会话提炼四层记忆（无模型时明确拒绝，不假装成功）
+
+### 参数
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--port` | `38080` | 监听端口 |
+| `--host` | `127.0.0.1` | 绑定地址（默认仅本机） |
+| `--home` | `./.starfire` | 数据目录（会话、节点、记忆） |
+| `--quiet` | — | 不打印启动横幅 |
+
+### 数据落盘
+
+```
+<home>/
+├── sessions/node-*.jsonl   会话日志，一行一个事件，重启后自动恢复
+├── nodes/                  spawnNode 产出的节点种子
+└── memory/                 facts / experiences / negatives
+```
+
+### 常用 API
+
+```bash
+curl http://127.0.0.1:38080/api/state                    # 全部状态
+curl -X POST http://127.0.0.1:38080/api/session -d '{}'  # 建节点
+curl -X POST http://127.0.0.1:38080/api/team -d '{}'     # 建三角色
+curl -X POST http://127.0.0.1:38080/api/repair \
+  -H "content-type: application/json" \
+  -d '{"reason":"host died","crashLog":"/path/crash.log"}'  # 触发维修节点
+```
+
+---
+
+## 二、看门狗：`node dist/watchdog.js`
+
+### 两种状态
+
+```
+HOSTED      DSH 活着。只探测，不做别的。
+REPAIRING   DSH 死了。拉起独立环境，下发维修指令，直到 DSH 回来。
+```
+
+**顺序是关键：维修环境由看门狗启动，不由 DSH 启动。** 活在被修对象里的维修会话会和它一起死。
+
+### 启动
+
+```bash
+# 同时探测 pid 文件和端口
+node dist/watchdog.js \
+  --pid-file ./.starfire/dsh.pid \
+  --probe-port 8080 \
+  --repair-env-port 38080 \
+  --interval 10000
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--pid-file` | — | 被监视进程的 pid 文件 |
+| `--probe-port` | — | 被监视服务必须应答的端口 |
+| `--repair-env-port` | `38080` | 独立环境端口 |
+| `--repair-home` | `./.starfire` | 独立环境数据目录 |
+| `--log-root` | 同 repair-home | 崩溃日志搜索根目录 |
+| `--interval` | `10000` | 探测间隔（毫秒） |
+| `--once` | — | 只探测一次然后退出 |
+| `--dry-run` | — | 不启动独立环境 |
+
+### 触发后发生什么
+
+```
+探测失败（连续达阈值）
+  → 找崩溃日志（排除自己的 watchdog.log）
+  → 启动 harness-server.js（若未运行）
+  → POST /api/repair，用 createSession 造一个维修节点
+  → 维修节点出现在 UI 节点列表，标题「维修 · <原因>」
+  → 状态写入 watchdog-state.json，UI 守护面板亮红灯
+```
+
+**实测**：强杀 DSH 到维修节点创建完成，1.6 秒。
+
+### 它不做什么
+
+- **不重启 DSH**。诊断和改配置是模型的工作。看门狗只负责让维修环境就位并知道发生了什么。
+- **不在没有模型时假装修好**。没有 Key 时维修节点会记录拒绝，而不是编造一个修复方案。
+
+---
+
+## 三、没有模型 Key 时会怎样
+
+**这一条必须写清楚，因为它决定你能不能用。**
+
+| 能力 | 有 Key | 无 Key |
+|---|---|---|
+| 启动宿主 / 打开 UI | ✅ | ✅ |
+| 建节点 / 切换节点 / 看列表 | ✅ | ✅ |
+| 会话持久化 / 重启恢复 | ✅ | ✅ |
+| 与节点对话得到**真实回答** | ✅ | ❌ 明确回复「没有配置模型凭据」 |
+| 提炼记忆生成 SKILL.md | ✅ | ❌ 明确拒绝 |
+| 看门狗发现崩溃 | ✅ | ✅ |
+| 看门狗拉起维修环境 | ✅ | ✅ |
+| 维修节点**诊断并写出修复** | ✅ | ❌ 记录拒绝 |
+
+### 结论
+
+> **如果没有配置 Key，系统能自愈到降级状态，但需要人类介入修复。**
+
+具体地：看门狗能发现 DSH 死了、能拉起独立环境、能创建一个维修节点并把崩溃原因和日志路径写进去 ——
+但这些**不会变成一个真正的修复**，因为写修复需要模型。你需要：
+
+1. 看 UI 守护面板的红灯和原因；
+2. 打开那个「维修」节点，看它记录了什么；
+3. **自己**读日志、改配置、重启 DSH。
+
+这不是缺陷，是把「机器能做到什么」和「只有在有模型时才能做到什么」分开说清楚。
+
+### 配置 Key
+
+```bash
+# PowerShell
+$env:DSH_HARNESS_BASE_URL="https://api.deepseek.com/v1"
+$env:DSH_HARNESS_API_KEY="sk-..."
+$env:DSH_HARNESS_MODEL="deepseek-chat"
+node dist/harness-server.js
+```
+
+```bash
+# bash
+export DSH_HARNESS_BASE_URL=https://api.deepseek.com/v1
+export DSH_HARNESS_API_KEY=sk-...
+export DSH_HARNESS_MODEL=deepseek-chat
+node dist/harness-server.js
+```
+
+配置成功后，UI 右上角「模型」显示 **已连接**（绿色）。
+
+---
+
+## 四、软接管
+
+宿主在 agent loop 内监控两个指标：
+
+| 指标 | 阈值 | 含义 |
+|---|---|---|
+| 连续工具失败 | 3 次 | 同一个操作反复失败 = 在循环，不是在学 |
+| 上下文估算 token | 60000 | 对话太长，马上要丢掉开头 |
+
+超限时注入：
+
+```
+[强制中断] 连续 3 次工具失败。请立刻停止当前做法，改用不同的思路；
+如果无法推进，直接说明卡在哪里，不要重复同一个失败的操作。
+```
+
+接管次数在 UI 状态面板可见。**它不重写对话、不声称已修复** —— 一个声称解决了问题的接管比没有更糟。
+
+---
+
+## 五、请求重试与故障
+
+**端口被占**：`--port 38081`
+
+**启动即退出**：终端会打印具体原因（EADDRINUSE / EACCES / 其他），不会静默退出。
+
+**页面空白**：检查终端有没有 `在浏览器打开：http://...`。没有说明进程退了。
+
+**发消息无反应**：看状态面板「模型」是否「未配置」。
+
+---
+
+*完整验证脚本：`_scratch/e2e-harness.mjs`（8 项）、`_scratch/e2e-two-state.mjs`（6 项）。*
+<!-- HOST:GUIDE:END -->
+
+
+
 > **`v0.4.0`（2026-11-06）— 存储加固与租约：可恢复的持久化 + 基于同一契约的互斥**
 >
 > 一句话：彼岸层只回答「**怎么在宿主上安全地造一个会话并往里写东西，以及怎么把它读回来**」，

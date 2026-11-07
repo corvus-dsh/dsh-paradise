@@ -24,7 +24,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stripTypeScriptTypes } from 'node:module'
 
-import { composeBundle } from './bundle.mjs'
+import { composeBundle, dropBareReExportLists } from './bundle.mjs'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const srcDir = join(root, 'src')
@@ -81,8 +81,14 @@ function inline(file) {
   /**
    * `export` KEYWORDS ARE STRIPPED — EXCEPT THE ENTRY'S OWN, because a CLI exports `main` for tests.
    * The same reason the plugin bundle keeps `index.ts`'s exports.
+   *
+   * `dropBareReExportLists` IS IMPORTED, NOT DUPLICATED. A bare `export { … }` list leaves a BLOCK
+   * STATEMENT when only the keyword is removed, and its trailing `}` then closes a brace nothing
+   * opened — `dist/harness.js` failed to parse with `Unexpected token '}'`, which is how this CLI
+   * stopped booting. The plugin builder had the same defect and was fixed first; copying that fix
+   * here would guarantee the two copies drift, so the helper is shared.
    */
-  return file === entry ? code.trim() : code.replace(/^export\s+/gmu, '').trim()
+  return file === entry ? code.trim() : dropBareReExportLists(code).replace(/^export\s+/gmu, '').trim()
 }
 
 function hoistNodeImports(pieces) {

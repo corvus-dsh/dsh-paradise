@@ -77,28 +77,139 @@ function inline(file) {
   /**
    * A MULTI-LINE `export { … }` BECOMES A NAKED BLOCK IF ONLY THE KEYWORD IS REMOVED.
    *
-   * WHY THIS USED TO BREAK, AND WHY THE BUILD DID NOT NOTICE:
+   * `export {` … `}` with only the keyword stripped leaves a BLOCK STATEMENT containing labels. That
+   * is valid syntax right up until its trailing `}` closes something it never opened — and then the
+   * artifact ships and fails at `import()` time instead of at build time.
+   *
+   * ── WHY THE PREVIOUS FIX WAS STILL WRONG ──────────────────────────────────────────────────────
+   *
+   * The first fix used a regex whose character class stopped at the FIRST `}` — and this package's
+   * real export block contains JSDoc comments with braces in them. The block looks like this, and
+   * the comment INSIDE it (elided here) mentions `createDshAdapters(ctx)` with braces of its own:
    *
    *     export {
-   *       createFirewall,
+   *       createDshAdapters,
+   *       … JSDoc containing braces …
+   *       createDshAdapters as createAdapters,
    *     }
    *
-   * `replace(/^export\s+/gmu, '')` turns that into
+   * The regex matched up to the `}` inside that prose, removed a fragment, and left a stray brace
+   * behind. `dist/harness.js` then failed to parse with `Unexpected token '}'` — the same class of
+   * failure the comment above was written to prevent, one layer deeper.
    *
-   *     {
-   *       createFirewall,
-   *     }
+   * ── THE FIX: A BALANCED SCAN THAT SKIPS COMMENTS AND STRINGS ─────────────────────────────────
    *
-   * which is a BLOCK STATEMENT containing a label — valid syntax right up until the trailing `}` closes
-   * something it never opened, or until a second one follows. The composer's guard only looks for surviving
-   * RELATIVE SPECIFIERS, so the artifact shipped and failed at `import()` time instead of at build time.
-   *
-   * THE FIX removes a bare re-export LIST entirely (its names are already in scope, because the module was
-   * imported at the top of the file by the author). It is anchored to a line that STARTS with `export` and
-   * a brace, and requires the list to be balanced — so a `export const x = {` is untouched.
+   * Regex cannot skip a brace inside a comment, and the file header already recorded that lesson
+   * ("imports are removed by a LINE walker and not a `[\s\S]*?` regex"). So this walks the text:
+   * it finds `export {` at the start of a line, then counts braces while IGNORING anything inside
+   * `//`, `/* … *\/`, `'…'`, `"…"` and backticks. The first unbalanced `}` ends the list.
    */
-  const withoutBareReExportList = code.replace(/^export\s*\{[^}]*\}\s*;?[ \t]*\n/gmu, '')
+  const withoutBareReExportList = dropBareReExportLists(code)
   return withoutBareReExportList.replace(/^export\s+/gmu, '').trim()
+}
+
+/**
+ * Remove every top-level `export { … }` list, keeping the rest of the file intact.
+ *
+ * Only an `export` at the START of a line qualifies, so `export const x = { a: 1 }` and
+ * `export function f() { … }` are untouched: their value follows the keyword rather than a brace.
+ */
+export function dropBareReExportLists(code) {
+  const lines = code.split('\n')
+  const out = []
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    /** `export {` or `export{` at line start, with nothing but spaces before the brace. */
+    const opener = /^export\s*\{/u.exec(line)
+    if (opener === null) {
+      out.push(line)
+      continue
+    }
+    /**
+     * Find the matching `}` by scanning from the opening brace, tracking depth and skipping the
+     * regions where a brace is data rather than syntax.
+     */
+    let depth = 0
+    let endLine = -1
+    let mode = 'code'
+    /** Start on the same line, after the brace. */
+    for (let li = index; li < lines.length && endLine === -1; li += 1) {
+      const text = lines[li]
+      const from = li === index ? opener.index + opener[0].length - 1 : 0
+      for (let ci = from; ci < text.length; ci += 1) {
+        const char = text[ci]
+        const next = text[ci + 1]
+        if (mode === 'line-comment') break
+        if (mode === 'block-comment') {
+          if (char === '*' && next === '/') {
+            mode = 'code'
+            ci += 1
+          }
+          continue
+        }
+        if (mode === 'single' || mode === 'double' || mode === 'template') {
+          const closer = mode === 'single' ? "'" : mode === 'double' ? '"' : '`'
+          if (char === '\\') {
+            ci += 1
+            continue
+          }
+          if (char === closer) mode = 'code'
+          continue
+        }
+        /** mode === 'code' */
+        if (char === '/' && next === '/') {
+          mode = 'line-comment'
+          break
+        }
+        if (char === '/' && next === '*') {
+          mode = 'block-comment'
+          ci += 1
+          continue
+        }
+        if (char === "'") {
+          mode = 'single'
+          continue
+        }
+        if (char === '"') {
+          mode = 'double'
+          continue
+        }
+        if (char === '`') {
+          mode = 'template'
+          continue
+        }
+        if (char === '{') {
+          depth += 1
+          continue
+        }
+        if (char === '}') {
+          depth -= 1
+          if (depth === 0) {
+            endLine = li
+            break
+          }
+        }
+      }
+      /** A line comment ends with the line, not with the list. */
+      if (mode === 'line-comment') mode = 'code'
+    }
+    if (endLine === -1) {
+      /**
+       * No balanced close: leave the text alone rather than eating the rest of the module. A build
+       * that silently deletes everything after an unbalanced brace is worse than one that ships a
+       * block statement the syntax check then catches.
+       */
+      out.push(line)
+      continue
+    }
+    /** Drop the whole list. Anything AFTER the closing brace on that line is kept. */
+    const tailLine = lines[endLine]
+    const closeAt = tailLine.lastIndexOf('}')
+    const tail = tailLine.slice(closeAt + 1).replace(/^;?\s*/u, '')
+    if (tail.length > 0) out.push(tail)
+    index = endLine
+  }
+  return out.join('\n')
 }
 
 const NODE_IMPORT = /^import\s*\{([^}]*)\}\s*from\s*'(node:[^']+)'\s*;?[ \t]*\n?/gmu

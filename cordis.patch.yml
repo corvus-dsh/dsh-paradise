@@ -7,4 +7,7 @@
 # Place this BEFORE dsh-graft-slice and dsh-observer in the profile's bundles list.
 - insert:
     - id: dsh-paradise
-      name: dsh-paradise
+      # v2.1.0: the npm name is scoped, so the loader must resolve the SCOPED path. The `id`
+      # stays bare because it is a stable handle other patches refer to — changing it would
+      # break every existing profile's references for no gain.
+      name: '@corvus-dsh/dsh-paradise'

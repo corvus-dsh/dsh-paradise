@@ -1,18 +1,24 @@
 {
-  "name": "dsh-paradise",
-  "version": "0.4.0",
-  "description": "DSH 彼岸层 (paradise): the physical layer under the session plugins. Now carries a HOST-NEUTRAL PROTOCOL (SessionAdapter / StorageAdapter / ToolAdapter) and one implementation of it per host under src/adapters/.",
-  "private": true,
+  "name": "@corvus-dsh/dsh-paradise",
+  "version": "2.1.0",
+  "description": "星火 OS 微内核 (paradise): the physical layer under the session plugins, and a standalone host of its own. Carries a HOST-NEUTRAL PROTOCOL (SessionAdapter / StorageAdapter / ToolAdapter), one implementation per host under src/adapters/, plus the creation primitive (spawnNode), the Tianhe dispatcher, an agent loop that needs no host, and a native harness with a browser UI.",
+  "private": false,
   "type": "module",
   "main": "index.js",
   "types": "./src/index.ts",
   "exports": {
     ".": "./index.js",
     "./manifest": "./manifest.json",
-    "./harness": "./dist/harness.js"
+    "./harness": "./dist/harness.js",
+    "./harness-server": "./dist/harness-server.js",
+    "./watchdog": "./dist/watchdog.js",
+    "./repair-cli": "./repair-cli.mjs"
   },
   "bin": {
-    "paradise-harness": "./dist/harness.js"
+    "paradise-harness": "./dist/harness.js",
+    "paradise-server": "./dist/harness-server.js",
+    "paradise-watchdog": "./dist/watchdog.js",
+    "paradise-repair": "./repair-cli.mjs"
   },
   "files": [
     "index.js",
@@ -21,12 +27,14 @@
     "src",
     "dist",
     "scripts",
+    "repair-cli.mjs",
     "PARADISE_SPEC.md",
     "README.md",
     "BOOTSTRAP_GUIDE.md",
     "TIANHE_PROTOCOL.md",
     "SELF_HEALING_PROMPT.md",
-    "HARNESS_ARCHITECTURE.md"
+    "HARNESS_ARCHITECTURE.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -34,7 +42,10 @@
     "build:all": "node scripts/build.mjs && node scripts/build-harness.mjs",
     "test": "node --test test/*.test.mjs",
     "preflight": "node scripts/preflight.mjs",
-    "check": "node scripts/build.mjs && node scripts/build-harness.mjs && node scripts/preflight.mjs && node --test test/*.test.mjs"
+    "start": "node dist/harness-server.js",
+    "watchdog": "node dist/watchdog.js",
+    "check": "node scripts/build.mjs && node scripts/build-harness.mjs && node scripts/preflight.mjs && node --test test/*.test.mjs",
+    "prepare": "node scripts/build.mjs && node scripts/build-harness.mjs"
   },
   "dsh": {
     "bundle": {
@@ -43,7 +54,7 @@
   },
   "engines": {
     "dsh": ">=0.2.1-rc.5",
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "keywords": [
     "dsh",
@@ -53,7 +64,18 @@
     "persistence",
     "zstd",
     "adapter",
-    "harness-agnostic"
+    "harness-agnostic",
+    "agent-harness",
+    "microkernel",
+    "starfire"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/corvus-dsh/dsh-paradise.git"
+  },
+  "homepage": "https://github.com/corvus-dsh/dsh-paradise#readme",
+  "bugs": {
+    "url": "https://github.com/corvus-dsh/dsh-paradise/issues"
+  }
 }

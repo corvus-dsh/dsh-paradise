@@ -2337,11 +2337,14 @@ const TRUST_ORDER                                        = Object.freeze({
  * trips it. That is a false positive, and it is a cheap one to live with — the alternative (a smarter guard
  * that skips comments) is a guard that can be defeated by a comment-shaped edge case.
  */
+
 /**
  * Bare re-exports, not `export … from`: this package ships as ONE inlined bundle and its composer
  * refuses a surviving relative specifier. The guard exists because an `export … from` would be
  * silently unresolved in the shipped file.
  */
+
+
 /**
  * The protocol's own error.
  *
@@ -4347,6 +4350,7 @@ function createDshSessionAdapter(ctx     )                 {
  * the plugin's own rollback. A protocol-level delete would tempt every caller to remove sessions it
  * did not create.
  */
+
 /** The escaping this host uses, for a caller that wants the derived directory name as a label. */
 const dshEscapeSessionDirName = escapeSessionDirName
 
@@ -8739,6 +8743,8 @@ function createRawAdapters(config
   }
 }
 
+                                                                       
+                                          
 /**
  * THE IGNITION VERB'S TYPES — exported because a deployment must be able to NAME what it is wiring.
  *
@@ -8767,6 +8773,7 @@ function createRawAdapters(config
  * this file, which is exactly what a guard is for.
  */
 
+                                          
 /** Referenced so the imported types are not flagged as unused under type-stripping builds. */
 
 /**
@@ -12377,8 +12384,12 @@ function createHarnessServer(options                      ) {
 const verifySessionDeletion = verifyDeletion
 
 /** Version probe, printed at import time so the host log proves which copy is live. */
-export const VERSION = '0.4.0'
-export const PACKAGE_NAME = 'dsh-paradise'
+export const VERSION = '2.1.0'
+/**
+ * v2.1.0: the npm name is scoped. The registry rejects the bare name, and a host log that prints a
+ * name the registry does not know makes "which copy is live" unanswerable — so this follows it.
+ */
+export const PACKAGE_NAME = '@corvus-dsh/dsh-paradise'
 console.log(`[dsh-paradise] layer version ${VERSION} (P1: read + protocol)`)
 
 /**

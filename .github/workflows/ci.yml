@@ -1,0 +1,66 @@
+# CI — build the artifacts, then run the tests against what was built.
+#
+# WHY THIS ORDER AND NOT `npm test` ALONE
+#
+# This package ships `index.js` and `dist/*.js` as COMMITTED BUILD OUTPUT, not as something the
+# consumer compiles. So a green test run proves nothing if the committed artifact is stale or
+# unbuildable — the tests can pass against `src/` while `index.js` is a version behind. That is the
+# exact failure this workflow exists to catch: "tests all green, artifact broken".
+#
+# So the gate is: rebuild from source → assert the rebuild did not change what is committed →
+# run the suite against the bundle that actually ships.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.5 is the floor because `node:sqlite` (used by the optional index tier) lands there.
+        node: [22.x, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Show the runtime we are actually testing on
+        run: node --version && npm --version
+
+      - name: Install (no dependencies expected — this package has none)
+        run: npm install --no-audit --no-fund
+
+      - name: Build the bundle and the harness
+        run: npm run build:all
+
+      - name: The build must not leave the committed artifacts stale
+        run: |
+          if [ -n "$(git status --porcelain -- index.js dist)" ]; then
+            echo "::error::The build changed committed artifacts. Run 'npm run build:all' and commit the result."
+            git --no-pager diff --stat -- index.js dist
+            exit 1
+          fi
+
+      - name: Syntax-check the standalone entry points
+        # `dist/*.js` are plain JavaScript run directly by Node, NOT the TypeScript bundle. A type
+        # annotation in one of them is a parse error at startup — which is how this project once
+        # shipped a server that died before binding its port.
+        run: |
+          node --check dist/harness.js
+          node --check dist/harness-server.js
+          node --check dist/watchdog.js
+          node --check repair-cli.mjs
+
+      - name: Preflight
+        run: npm run preflight
+
+      - name: Test
+        run: npm test

@@ -92,7 +92,13 @@ jobs:
       # write path THROUGH it; adding one here would mean this package depends on an installed copy of
       # itself.
       - name: This package IS the layer (no sibling checkout)
-        run: echo "ok: no sibling layer required"
+        # NOT a `run: echo "ok: ..."` one-liner. YAML parses `run: echo "text: more text"` as a
+        # MAPPING (the first `: ` inside the scalar starts a key), so the step becomes structurally
+        # invalid and GitHub rejects the WHOLE file — which presents as the workflow being named
+        # `.github/workflows/publish.yml` instead of `Publish`, with no error anywhere. That cost a
+        # debugging round here; a block scalar (`|`) cannot be misread this way.
+        run: |
+          echo "ok - no sibling layer required"
 
       - run: npm install --no-audit --no-fund
 

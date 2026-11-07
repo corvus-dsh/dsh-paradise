@@ -87,21 +87,12 @@ jobs:
             console.log('ok: npm ' + have)
           " "$NPM_VERSION"
 
-      # The layer is a sibling repository, exactly as the CI workflow arranges it. The publish job runs
-      # the same suite, so it needs the same layout — otherwise it would test against a package that
-      # resolves differently than it does in CI.
-      - name: Check out the layer this plugin writes through
-        uses: actions/checkout@v4
-        with:
-          repository: corvus-dsh/dsh-paradise
-          path: .siblings/dsh-paradise
-
-      - name: Place the layer where the sibling probe expects it
-        run: |
-          set -e
-          mv .siblings/dsh-paradise ../dsh-paradise
-          rm -rf .siblings
-          node -e "console.log('layer at', require('node:fs').realpathSync('../dsh-paradise/index.js'))"
+      # THIS REPOSITORY IS THE LAYER, so there is nothing to check out beside it. Every other repo in
+      # this family resolves dsh-paradise from a sibling directory because their tests exercise the
+      # write path THROUGH it; adding one here would mean this package depends on an installed copy of
+      # itself.
+      - name: This package IS the layer (no sibling checkout)
+        run: echo "ok: no sibling layer required"
 
       - run: npm install --no-audit --no-fund
 

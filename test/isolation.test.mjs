@@ -271,12 +271,47 @@ test('isolation: the dual-mode supervisor imports NO host module', () => {
    */
   const launcher = readFileSync(join(srcDir, 'launcher.ts'), 'utf8')
   const imports = [...launcher.matchAll(/^import[^\n]*from\s+['"]([^'"]+)['"]/gmu)].map((match) => match[1])
-  const offenders = imports.filter((specifier) => !specifier.startsWith('./protocol/'))
+  /**
+   * WHAT "LEAVES protocol/" ACTUALLY MEANT.
+   *
+   * The first version of this assertion required EVERY import to start with `./protocol/`. That is a
+   * proxy for the real invariant, and the two stopped being the same thing when `launcher.ts` began
+   * sharing one extraction rule with `emergency-repair.ts`: a top-level sibling that imports NOTHING
+   * but the protocol cannot reintroduce the failure this test exists to prevent (a supervisor that
+   * needs its host cannot run when the host is dead).
+   *
+   * So the bar is unchanged and now STATED AS WHAT IT IS, plus made TRANSITIVE: the allowed set is
+   * node builtins, the protocol, and top-level siblings — and every sibling actually used is read and
+   * required to be host-free in turn. A sibling that one day imports `adapters/dsh/` fails here.
+   */
+  const hostFree = (specifier) => {
+    if (specifier.startsWith('node:')) return true
+    if (specifier.startsWith('./protocol/')) return true
+    return /^\.\/[a-z0-9-]+\.js$/u.test(specifier)
+  }
+  const offenders = imports.filter((specifier) => !hostFree(specifier))
   assert.deepEqual(
     offenders,
     [],
-    'launcher.ts must import only the protocol; a supervisor that needs its host cannot run when the host is down',
+    'launcher.ts must not import a host module; a supervisor that needs its host cannot run when the host is down',
   )
+
+  /**
+   * THE TRANSITIVE HALF. An import list proves nothing about what those files import, so each sibling
+   * the launcher leans on is opened and held to the same bar.
+   */
+  for (const specifier of imports.filter((s) => /^\.\/[a-z0-9-]+\.js$/u.test(s) && !s.startsWith('./protocol/'))) {
+    const sibling = join(srcDir, specifier.replace(/^\.\//u, '').replace(/\.js$/u, '.ts'))
+    const source = readFileSync(sibling, 'utf8')
+    const siblingImports = [...source.matchAll(/^import[^\n]*from\s+['"]([^'"]+)['"]/gmu)].map((match) => match[1])
+    const nested = siblingImports.filter((nested) => !hostFree(nested))
+    assert.deepEqual(
+      nested,
+      [],
+      `${specifier} is reachable from launcher.ts and imports a host module: ${nested.join(', ')}. ` +
+        'A host-free supervisor cannot rest on a dependency that is not host-free.',
+    )
+  }
   assert.ok(imports.length > 0, 'and it must actually import the protocol (an empty import list would pass vacuously)')
 })
 

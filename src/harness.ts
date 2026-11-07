@@ -409,6 +409,20 @@ export function createHarness(config: HarnessConfig): HarnessRuntime {
   }
 
   /**
+   * THE DIAGNOSTIC THAT TURNS A USELESS ERROR INTO A USABLE ONE.
+   *
+   * `TOOL_FAILED: Invalid or unexpected token` is what the repair loop printed while the actual cause
+   * was "the reply's prose was compiled as JavaScript". The message was true and told nobody anything,
+   * so the next attempt could not be different — which is the one thing a self-healing loop must
+   * guarantee. Carrying the text that was actually compiled makes the failure read itself.
+   */
+  const sourceExcerpt = (text: string): string => {
+    const flat = text.replace(/\s+/gu, ' ').trim()
+    const head = flat.slice(0, 160)
+    return `（被编译的源码前 160 字符：${head}${flat.length > 160 ? '…' : ''}）`
+  }
+
+  /**
    * THE REPAIR, WIRED AS THE LAUNCHER'S EXECUTOR.
    *
    * The launcher asks "give me something to run"; this answers by running a SESSION and compiling what
@@ -435,11 +449,11 @@ export function createHarness(config: HarnessConfig): HarnessRuntime {
     const toolName = `repair-attempt-${attempt}`
     const defined = await tools.define({ name: toolName, source, description: `紧急维修尝试 #${attempt}` })
     if (defined.ok !== true) {
-      return { error: `COMPILE_FAILED：${defined.error?.message ?? 'unknown'}`, ran: false, defined: false }
+      return { error: `COMPILE_FAILED：${defined.error?.message ?? 'unknown'}${sourceExcerpt(source)}`, ran: false, defined: false }
     }
     const outcome = await tools.execute(toolName, { diagnosis })
     if (outcome.isError) {
-      return { error: `TOOL_FAILED：${outcome.error?.message ?? 'unknown'}`, ran: false, defined: true, toolName }
+      return { error: `TOOL_FAILED：${outcome.error?.message ?? 'unknown'}${sourceExcerpt(source)}`, ran: false, defined: true, toolName }
     }
     const output = typeof outcome.value === 'string' ? outcome.value : JSON.stringify(outcome.value ?? null)
     return { output, ran: true, defined: true, toolName }
@@ -521,6 +535,22 @@ export function createHarness(config: HarnessConfig): HarnessRuntime {
   const transitions: LauncherEvent[] = []
   const attempts: RepairAttempt[] = []
 
+  /**
+   * WHICH ATTEMPT HAS ALREADY BEEN ACTED ON — the guard that stops the harness restarting forever.
+   *
+   * THE BUG THIS FIXES, MEASURED. The condition below used to be "state is hosted AND there is at least
+   * one attempt", with the restart gated only on `last.ran === true`. Once a repair had succeeded, that
+   * stayed true on EVERY later tick, so a recovered system was restarted again and again, each time
+   * spawning another host. `_scratch/e2e-selfheal.mjs` scenario A showed it plainly: one crash, TWO
+   * restarts (pids 17500 then 9928), with only the last pid recorded — so the extra host was not merely
+   * wasteful, it was invisible.
+   *
+   * KEYED ON THE ATTEMPT NUMBER, not on a boolean: a boolean would also block the LEGITIMATE second
+   * restart after a NEW repair attempt. `RepairAttempt.attempt` is monotonic per launcher, so "have I
+   * already restarted for attempt N" is a question with one correct answer.
+   */
+  let restartedAttempt = 0
+
   function report(): HarnessResult {
     const state = launcher.report()
     const reportPath = join(reportsDir, `harness-${Date.now().toString(36)}.json`)
@@ -582,7 +612,8 @@ export function createHarness(config: HarnessConfig): HarnessRuntime {
       if (state.state === 'repairing' || state.state === 'degraded' || (state.state === 'hosted' && state.attempts.length > 0)) {
         const last = state.attempts[state.attempts.length - 1]
         const repaired = last !== undefined && last.ran === true && (last.output ?? '').startsWith('UNRESOLVED') === false
-        if (repaired) {
+        if (repaired && last.attempt !== restartedAttempt) {
+          restartedAttempt = last.attempt
           const restarted = await restart()
           log(`修复脚本已执行 → 重启：${restarted.ok ? restarted.detail : restarted.detail}`)
           if (restarted.ok) {

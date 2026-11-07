@@ -29,6 +29,16 @@
  */
 
 import type { LLMAdapter, MessageAdapter, ToolFactory, GenerationResult } from './protocol/index.js'
+/**
+ * ONE EXTRACTION RULE, SHARED.
+ *
+ * This file used to carry its own inline `replace(/^```…/, '')`, which was MORE tolerant than
+ * `extractToolSource` — so the launcher path survived a chatty reply while the harness path died on it
+ * (`TOOL_FAILED: Invalid or unexpected token`, reproduced in `_scratch/e2e-selfheal.mjs` scenario B).
+ * Two copies of "how do I get the code out of this reply" is exactly how a repair that works on one
+ * path fails on the other, so there is now one implementation and both paths call it.
+ */
+import { extractToolSource } from './emergency-repair.js'
 
 /** How the supervisor decides the hosted mode is unwell. */
 export interface HealthProbe {
@@ -265,7 +275,7 @@ export function createLauncher(options: LauncherOptions) {
      * failure would reject a perfectly good repair over presentation. The fence is stripped, the content
      * is kept, and nothing else is repaired on the model's behalf.
      */
-    const source = answer.text.trim().replace(/^```[a-z]*\n?/iu, '').replace(/\n?```$/u, '').trim()
+    const source = extractToolSource(answer.text)
     if (source.length === 0) return { ...record, error: 'MODEL_EMPTY：模型没有输出任何内容' }
 
     if (options.tools === undefined) {

@@ -220,9 +220,109 @@ export function createEmergencyRepair(options: EmergencyRepairOptions) {
  */
 export function extractToolSource(text: string): string {
   const trimmed = String(text ?? '').trim()
-  const fenced = trimmed.match(/^```[a-z]*\n([\s\S]*?)\n?```$/iu)
-  if (fenced !== null && typeof fenced[1] === 'string') return fenced[1].trim()
+  if (trimmed.length === 0) return trimmed
+
+  /**
+   * STEP 1 — A FENCE AROUND THE WHOLE REPLY. The cleanest signal, and the shape the prompt asks for.
+   */
+  const whole = trimmed.match(/^```[a-z]*[ \t]*\r?\n([\s\S]*?)\r?\n?```$/iu)
+  if (whole !== null && typeof whole[1] === 'string') return whole[1].trim()
+
+  /**
+   * STEP 2 — A FENCE ANYWHERE IN THE REPLY. THIS IS THE CASE THAT USED TO BREAK IN PRODUCTION.
+   *
+   * The old rule was `^```…```$`: a fence had to wrap the ENTIRE reply. A model that writes one
+   * sentence before the block -- "我来诊断。```js … ```" -- therefore did not match, its prose was
+   * compiled as JavaScript, and the loop died with:
+   *
+   *     TOOL_FAILED: Invalid or unexpected token
+   *
+   * MEASURED, not theorised: `_scratch/e2e-selfheal.mjs` scenario B reproduced it, and the message
+   * named neither the cause nor the cure. A model being chatty is not a repair failure, and rejecting
+   * a working repair over presentation is the worst possible place to be strict.
+   *
+   * When several blocks are present, the one carrying `execute` wins: a model often shows a
+   * before/after diff or an unrelated snippet earlier in the reply, and picking the first block blindly
+   * would compile the wrong one.
+   */
+  const blocks = [...trimmed.matchAll(/```[a-z]*[ \t]*\r?\n([\s\S]*?)```/giu)]
+  if (blocks.length > 0) {
+    const chosen = blocks.find((block) => /\bexecute\b/u.test(block[1] ?? '')) ?? blocks[0]
+    const inner = chosen?.[1]
+    if (typeof inner === 'string' && inner.trim().length > 0) return inner.trim()
+  }
+
+  /**
+   * STEP 3 — NO FENCE AT ALL, BUT PROSE AROUND THE OBJECT. Some models answer in ordinary Markdown
+   * without fences ("修复方案如下：{ … } 以上。"), and that is a complete, usable answer.
+   */
+  const inline = extractBalancedObject(trimmed)
+  if (inline !== undefined) return inline
+
+  /** STEP 4 — NOTHING RECOGNISABLE. Return it unchanged, so the compile error names the real text. */
   return trimmed
+}
+
+/**
+ * THE OUTERMOST BALANCED `{…}` THAT CARRIES `execute`, or `undefined`.
+ *
+ * WHY A SCANNER AND NOT A REGEX: `{` and `}` appear inside the tool's own strings and object literals
+ * (`parameters: { type: 'object' }`, a message containing a brace), so a greedy or lazy regex ends the
+ * object at the wrong brace and produces source that compiles into something else entirely. This walks
+ * the text once, skipping string literals and comments, and returns the slice where depth returns to
+ * zero.
+ *
+ * The returned slice is a bare object literal, which is exactly what the compile contract expects:
+ * `new Function('return (' + source + ')')`. Parentheses the model wrapped it in are simply dropped.
+ */
+function extractBalancedObject(text: string): string | undefined {
+  const start = text.indexOf('{')
+  if (start < 0) return undefined
+
+  let depth = 0
+  let quote: string | undefined
+  let escaped = false
+
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]
+
+    if (quote !== undefined) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === quote) quote = undefined
+      continue
+    }
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch
+      continue
+    }
+
+    /** A `}` inside a comment is not a closing brace. Skip the comment wholesale. */
+    if (ch === '/' && text[i + 1] === '/') {
+      const newline = text.indexOf('\n', i)
+      if (newline < 0) break
+      i = newline
+      continue
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2)
+      if (end < 0) break
+      i = end + 1
+      continue
+    }
+
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        const candidate = text.slice(start, i + 1)
+        /** Only a slice that carries the contract is worth returning; otherwise keep looking is pointless. */
+        return /\bexecute\b/u.test(candidate) ? candidate : undefined
+      }
+    }
+  }
+  return undefined
 }
 
 /**

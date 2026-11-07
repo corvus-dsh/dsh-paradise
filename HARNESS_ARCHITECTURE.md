@@ -17,6 +17,7 @@
 > | 产物不含任何宿主符号 | `node -e "const s=require('fs').readFileSync('dist/harness.js','utf8');for(const k of ['sessionPersistence','sessionController','sessionQuery','createDshAdapters'])console.log(k, s.split(k).length-1)"` |
 > | 协议层纯度（无宿主字样） | `npm test` 里的 `protocol-purity.test.mjs` |
 > | 沙箱白名单与超时 | `npm test` 里的 sandbox 相关用例 |
+> | **崩溃 → 修复 → 重启 → 宿主真的回来了**（自修复闭环） | `npm test` 里的 `v090-selfheal-loop.test.mjs`（真 HTTP 模型 + 真 SIGKILL + 真 spawn） |
 > | 全量回归 | `npm test`（CI 每次推送都跑） |
 >
 > 未完成的验证仍然未完成，写法也改了：不再引用脚本，而是直接说"未验证"（见 §6.3）。
@@ -272,13 +273,36 @@ const launcher = createLauncher({
 ```
 ✔ 独立线程，崩溃可控
 ✔ 硬终止：worker.terminate() 能杀掉同步死循环（Promise.race 不能）
-✔ fs 白名单：越界在读/写发生之前就被拒
+✔ fs 白名单：api.readFile / api.writeFile 越界在读/写发生之前就被拒
+    —— 注意这句只说 api.* 这一层。它不承诺"沙箱能阻止越界访问"，见下面两条。
 ✔ require / process 作为函数参数被遮蔽为 undefined
-✘ 不是对"坚定攻击者"的安全边界：globalThis 仍可经 Function 构造器触达
+✔ v0.9.0-beta.1 起：contextCodeGeneration: { strings: false, wasm: false }
+    —— eval 与 new Function 在工具上下文里直接抛错，于是
+       (function(){}).constructor('return require')() 这条构造器路径也堵了。
+       实测记录：_scratch/probe-sandbox-escape.mjs（构造器取 require 现报
+       "Code generation from strings disallowed"，沙箱外写入未发生）
+✘ 仍然**不是**安全边界：node:vm 被 Node 官方明确声明"不是安全机制"。
+    它把攻击面从"一行代码"抬到"若干已知 CVE"，是抬高门槛，不是修好。
+    需要真正隔离的调用方必须用 node --permission、容器或 seccomp。
 ```
 
 `SandboxCapabilities.escapesGlobals` **恒为 `true`**，并且是导出的一部分。
 需要真正隔离的调用方必须用 `node --permission`、容器或 seccomp —— **这个模块不会假装自己做到了。**
+
+### 6.2.1 自修复链路的状态：**测试功能**，且只在你填入凭据后才有"修"这个动作
+
+| 你提供 LLM 端点 + Key | 彼岸是什么 | 能不能自动修复 |
+|---|---|---|
+| 不提供 | **只是一个适配层** | ❌ 能检测、能降级、能记录崩溃现场；不会拉起维修会话 |
+| 提供你自己的 | 自修复链路（**测试功能**） | ✅ 检测失效 → 拉起维修会话 → 产出并执行修复 → 重启宿主 → **再探一次确认它真的回来了** |
+
+闭环的判据在 `test/v090-selfheal-loop.test.mjs` 里，是**可测量的**而不是声明式的：假宿主是一个真的
+`node` 进程，被真的 `SIGKILL`；重启命令拉起的是真的长驻宿主；断言是"心跳文件的字节数增长"+
+"重启后的 pid 活着"+"宿主总共只被拉起 2 次（1 原始 + 1 重启）"。
+
+> **为什么"只被拉起 2 次"也是一条断言**：修好之前，`runOnce` 在修复成功后**每个 tick 都会再重启一次**，
+> 每重启一次就多一个宿主进程，而 pid 文件只记录最新的那个——多出来的宿主是**看不见的**。
+> 这个数字就是那条缺陷的回归。
 
 ### 6.3 仍未关闭的三条（不修饰）
 

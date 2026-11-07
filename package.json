@@ -1,6 +1,6 @@
 {
   "name": "@corvus-dsh/dsh-paradise",
-  "version": "0.9.0-beta.1",
+  "version": "0.9.0-beta.2",
   "description": "星火 OS 微内核 (paradise): the physical layer under the session plugins, and a standalone host of its own. Carries a HOST-NEUTRAL PROTOCOL (SessionAdapter / StorageAdapter / ToolAdapter), one implementation per host under src/adapters/, plus the creation primitive (spawnNode), the Tianhe dispatcher, an agent loop that needs no host, and a native harness with a browser UI.",
   "private": false,
   "type": "module",

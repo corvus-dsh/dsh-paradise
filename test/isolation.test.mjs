@@ -217,6 +217,21 @@ test('isolation: every host-specific file lives under adapters/', () => {
      * module. The guard below asserts that.
      */
     'watchdog.ts',
+    /**
+     * `spawn-node.ts` and `dispatcher.ts` — THE CREATION PRIMITIVE and a scheduler over it.
+     *
+     * Allowed at the top level for the reason that defines the primitive: a node must be
+     * creatable on a machine where no host has ever run. `spawnNode` PROBES host capability and
+     * reports `mode: 'portable'` when there is none, so it must load without the host present —
+     * which a file under `adapters/<host>/` could not promise.
+     *
+     * Neither imports a host module: `spawn-node.ts` imports the tape builder, the capability
+     * probe, and (lazily, only on the host path) the session writer; `dispatcher.ts` imports
+     * `spawn-node` and the tape type. The guard below asserts that, and the identifier scan above
+     * confirms no host service name leaks into the neutral layer.
+     */
+    'spawn-node.ts',
+    'dispatcher.ts',
   ]
   const top = readdirSync(srcDir, { withFileTypes: true }).map((entry) => entry.name)
   const unexpected = top.filter((name) => !allowed.includes(name))

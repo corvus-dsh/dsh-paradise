@@ -437,6 +437,28 @@ export { buildDiagnosis, createWatchdog }
 export type { WatchdogEvent, WatchdogOptions, WatchdogProbe, WatchdogReport, WatchdogState } from './watchdog.js'
 
 /**
+ * SPAWN NODE — the creation primitive.
+ *
+ * Every other entry point needs a SOURCE: a slice needs a session, a repair needs a crash. A
+ * dispatcher that fans work out to N agents cannot start from something. This starts from nothing
+ * but a task description, and it reports whether it made a live host session or a drivable contract.
+ */
+import { canSpawnOnHost, spawnNode } from './spawn-node.js'
+export { canSpawnOnHost, spawnNode }
+export type { SpawnNodeContextItem, SpawnNodeInput, SpawnNodeReceipt } from './spawn-node.js'
+
+/**
+ * TIANHE DISPATCHER — tickets in, receipts out, nodes in between.
+ *
+ * A minimal scheduler over `spawnNode`: a plain-JSON ticket names who does what, the dispatcher
+ * turns it into a node, and receipts come back. Dependency handling is explicit and a cycle is
+ * reported rather than spun on.
+ */
+import { dispatch } from './dispatcher.js'
+export { dispatch }
+export type { DispatchReport, DispatcherEvent, DispatcherOptions, NodeRunner, TianheReceipt, TianheTicket } from './dispatcher.js'
+
+/**
  * Test seam: the write SHAPE functions.
  *
  * These moved here from `dsh-observer/src/core/observer-inject.ts`, together with their tests: a

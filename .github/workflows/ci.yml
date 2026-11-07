@@ -42,22 +42,38 @@ jobs:
         run: npm run build:all
 
       - name: The build must not leave the committed artifacts stale
+        # ONLY THE GENERATED FILES ARE CHECKED.
+        #
+        # `dist/harness-server.js` and `dist/watchdog.js` are HAND-WRITTEN programs that happen to
+        # live in `dist/`. Including them here would fail whenever a human edited one without running
+        # the build — which is the correct workflow for a file the build does not produce.
+        #
+        # The first version of this workflow checked all of `dist/`, and the actual failure was
+        # different and worse: `.gitignore` excluded the whole directory, so the two programs were
+        # NEVER COMMITTED and CI died at `node --check` with `Cannot find module`. The `.gitignore`
+        # now whitelists them explicitly; this step names only what the build regenerates.
         run: |
-          if [ -n "$(git status --porcelain -- index.js dist)" ]; then
-            echo "::error::The build changed committed artifacts. Run 'npm run build:all' and commit the result."
-            git --no-pager diff --stat -- index.js dist
+          GENERATED="index.js dist/harness.js"
+          if [ -n "$(git status --porcelain -- $GENERATED)" ]; then
+            echo "::error::The build changed generated artifacts. Run 'npm run build:all' and commit the result."
+            git --no-pager diff --stat -- $GENERATED
             exit 1
           fi
 
-      - name: Syntax-check the standalone entry points
-        # `dist/*.js` are plain JavaScript run directly by Node, NOT the TypeScript bundle. A type
-        # annotation in one of them is a parse error at startup — which is how this project once
-        # shipped a server that died before binding its port.
+      - name: Every entry point the package exposes must exist and parse
+        # The documented `bin` targets and `dist/harness.js` are what a user actually runs, so a
+        # missing one is a shipped defect. `--check` catches the specific class of failure this
+        # project has hit twice: a TypeScript annotation left in a file Node executes directly.
         run: |
-          node --check dist/harness.js
-          node --check dist/harness-server.js
-          node --check dist/watchdog.js
-          node --check repair-cli.mjs
+          set -e
+          for f in dist/harness.js dist/harness-server.js dist/watchdog.js repair-cli.mjs; do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing entry point: $f (is it listed in .gitignore?)"
+              exit 1
+            fi
+            node --check "$f"
+            echo "ok: $f"
+          done
 
       - name: Preflight
         run: npm run preflight

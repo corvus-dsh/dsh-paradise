@@ -1,4 +1,25 @@
-﻿dist/
+dist/
 node_modules/
 *.tmp
 *.log
+
+# ── HAND-WRITTEN ENTRY POINTS INSIDE dist/ ──────────────────────────────────────────────────
+#
+# `dist/` is a build-output directory, with three exceptions. These are PROGRAMS, not artefacts:
+#
+#   dist/harness-server.js   the standalone host
+#   dist/watchdog.js         the two-state guardian
+#   dist/harness.js          generated, but committed so `node dist/harness.js` works from a clone
+#
+# WHY THIS MATTERS: CI checked out the repository and ran `node --check dist/harness-server.js`,
+# which failed with `Cannot find module` — because `.gitignore` excluded the whole directory and the
+# two hand-written programs had never been tracked. The build produced `harness.js` only, so nothing
+# recreated the other two. A file that is hand-edited but lives where only generated files are
+# expected will always be lost this way.
+#
+# The negation lines below are the documented exception. The rule stays "dist/ is output"; these
+# three names are the ones that are source.
+!dist/
+!dist/harness.js
+!dist/harness-server.js
+!dist/watchdog.js

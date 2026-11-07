@@ -11315,8 +11315,7 @@ function createParadiseHarness(options                ) {
   }
 
   /** Every session, newest activity first. Loads from disk when the runtime does not remember it. */
-  function listSessions()                        {
-    const out                        = []
+  function listSessions()                        {    const out                        = []
     const known = new Set        ()
     for (const entry of runtime.values()) {
       out.push(entry.state)
@@ -11477,6 +11476,55 @@ function createParadiseHarness(options                ) {
     return true
   }
 
+  /**
+   * START A REPAIR SESSION — the last piece of the two-state architecture.
+   *
+   * The watchdog notices DSH died and calls this. It creates a node whose JOB is the crash, seeds it
+   * with the reason and the log path, and leaves it in the node list so the UI can show its live
+   * progress. That ordering is the whole point: a repair session hosted inside the thing it repairs
+   * dies with it.
+   *
+   * WHAT IT DOES NOT DO: claim the crash is fixed. It creates the node and (when a model is
+   * configured) runs one turn. Whether that turn produced a fix is visible in the node's own
+   * transcript, which is precisely where an operator should look.
+   */
+  async function startRepair(input   
+                  
+                            
+                      
+                                                                                      
+                     
+   )                                                                              {
+    const node = createSession({
+      title: `维修 · ${input.reason.slice(0, 40)}`,
+      ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
+      system:
+        '你是彼岸层的维修节点。宿主（DSH）被判定死亡，你是唯一还能行动的实体。' +
+        '你的任务：读取崩溃日志、定位原因、写出修复、然后说明需要怎样重启宿主。' +
+        '只修改工作区内的文件。不确定时先读再写，宁可少改。',
+    })
+    /** The directive is the node's first user message, so its transcript explains itself. */
+    const directive = [
+      `宿主已崩溃。原因：${input.reason}`,
+      input.crashLog === null || input.crashLog === undefined
+        ? '未能定位崩溃日志文件（工作区内没有 .log）。请先确认日志在哪，再决定下一步。'
+        : `崩溃日志：${input.crashLog}`,
+      '',
+      '请按顺序：读日志 → 定位原因 → 写修复 → 说明如何重启。',
+    ].join('\n')
+    if (input.runTurn === false) {
+      appendMessage(getSession(node.id)                  , { role: 'user', content: directive })
+      return { sessionId: node.id, ok: true }
+    }
+    const result = await send(node.id, directive)
+    return {
+      sessionId: node.id,
+      reply: result.reply,
+      ok: result.ok,
+      ...(result.error === undefined ? {} : { error: result.error }),
+    }
+  }
+
   return {
     home,
     llmMode,
@@ -11485,6 +11533,7 @@ function createParadiseHarness(options                ) {
     getSession: (id        ) => getSession(id)?.state,
     send,
     killSession,
+    startRepair,
     /** Tokens the harness is willing to hold before a takeover, for the UI to display. */
     get tokenWatermark()         {
       return tokenWatermark
@@ -11839,6 +11888,11 @@ const PAGE = `<!doctype html>
 </main>
 
 <div id="status">
+  <div class="panel-title">宿主守护</div>
+  <div class="kv"><span>看门狗</span><span id="g-dog">未运行</span></div>
+  <div class="kv"><span>DSH 状态</span><span id="g-host">未知</span></div>
+  <div class="kv"><span>最近探测</span><span id="g-at">-</span></div>
+  <div id="g-detail" style="color:var(--muted);font-size:11px;padding:4px 0;word-break:break-all"></div>
   <div class="panel-title">宿主</div>
   <div class="kv"><span>模型</span><span id="s-llm">-</span></div>
   <div class="kv"><span>节点总数</span><span id="s-sessions">0</span></div>
@@ -11912,6 +11966,34 @@ const PAGE = `<!doctype html>
     $('m-facts').textContent = memory.facts ?? '-';
     $('m-exp').textContent = memory.experiences ?? '-';
     $('m-neg').textContent = memory.negatives ?? '-';
+
+    /**
+     * THE GUARDIAN LAMP.
+     *
+     * Three states, and they must not be collapsed: no watchdog (grey), watchdog reports the host
+     * dead (red), watchdog reports it alive (green). A machine with no guardian is NOT healthy, and
+     * showing it green is exactly how an outage goes unnoticed.
+     */
+    const guardian = payload.guardian;
+    if (guardian === null || guardian === undefined) {
+      $('g-dog').textContent = '未运行';
+      $('g-dog').className = 'status-warn';
+      $('g-host').textContent = '未知';
+      $('g-host').className = '';
+      $('g-at').textContent = '-';
+      $('g-detail').textContent = '没有看门狗在守护。启动 node dist/watchdog.js';
+    } else {
+      $('g-dog').textContent = '运行中';
+      $('g-dog').className = 'status-ok';
+      $('g-host').textContent = guardian.hostOk ? '存活' : '已死亡';
+      $('g-host').className = guardian.hostOk ? 'status-ok' : 'status-bad';
+      $('g-at').textContent = String(guardian.at || '-').slice(11, 19);
+      const bits = [];
+      if (Array.isArray(guardian.reasons) && guardian.reasons.length > 0) bits.push('原因：' + guardian.reasons.join(', '));
+      if (guardian.crashLog) bits.push('日志：' + guardian.crashLog);
+      $('g-detail').textContent = bits.join(' · ');
+    }
+
     const tickets = payload.tickets || [];
     const panel = $('tickets');
     panel.innerHTML = '';
@@ -12054,6 +12136,34 @@ function readMemoryCounts(home        )                         {
   }
 }
 
+/**
+ * The watchdog's last written state, or `null` when it has never run in this home.
+ *
+ * A MISSING FILE IS NOT "HEALTHY". It means no guardian is watching, which the UI must be able to
+ * say — otherwise a machine with no watchdog looks identical to one whose host is fine.
+ */
+function readGuardianState(home        )   
+            
+                 
+                   
+                         
+                              
+         {
+  try {
+    const raw = readFileSync(`${home}/watchdog-state.json`, 'utf8')
+    const parsed = JSON.parse(raw)                           
+    return {
+      at: String(parsed.at ?? ''),
+      hostOk: parsed.hostOk === true,
+      reasons: Array.isArray(parsed.reasons) ? parsed.reasons.map(String) : [],
+      crashLog: parsed.crashLog === null || parsed.crashLog === undefined ? null : String(parsed.crashLog),
+      ...(typeof parsed.lastRepairSessionId === 'string' ? { lastRepairSessionId: parsed.lastRepairSessionId } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
 function createHarnessServer(options                      ) {
   const harness = createParadiseHarness(options)
   const sockets = new Set        ()
@@ -12089,6 +12199,14 @@ function createHarnessServer(options                      ) {
         })),
         memory: readMemoryCounts(options.home),
         tickets: [...tickets.values()],
+        /**
+         * THE GUARDIAN PANEL'S DATA.
+         *
+         * The watchdog writes `watchdog-state.json` when it notices a death; this reports it so the
+         * UI can light a red lamp and show the reason WITHOUT the UI having to find the watchdog.
+         * `null` means "no watchdog has ever run here", which is different from "the host is fine".
+         */
+        guardian: readGuardianState(options.home),
       })
       return
     }
@@ -12146,6 +12264,26 @@ function createHarnessServer(options                      ) {
               return
             }
             sendJson(response, 200, { ok: true, message: '提炼已排队（需要至少一个已完成的会话）。' })
+            return
+          }
+          if (url === '/api/repair') {
+            /**
+             * THE WATCHDOG'S ENTRY POINT.
+             *
+             * The watchdog does not know how to make a node; it knows the host is dead. This is where
+             * that knowledge becomes an actual repair session, seeded with the reason and the log
+             * path, visible in the node list while it runs.
+             */
+            const reason = String(body.reason ?? 'unknown')
+            const crashLog = body.crashLog === null || body.crashLog === undefined ? null : String(body.crashLog)
+            const workspace = body.workspace === undefined ? undefined : String(body.workspace)
+            const repair = await harness.startRepair({
+              reason,
+              crashLog,
+              ...(workspace === undefined ? {} : { workspace }),
+            })
+            broadcast({ type: 'repair-started', sessionId: repair.sessionId })
+            sendJson(response, 200, repair)
             return
           }
           sendJson(response, 404, { error: 'unknown endpoint' })

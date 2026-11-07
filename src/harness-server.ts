@@ -257,8 +257,7 @@ export function createParadiseHarness(options: HarnessOptions) {
   }
 
   /** Every session, newest activity first. Loads from disk when the runtime does not remember it. */
-  function listSessions(): HarnessSessionState[] {
-    const out: HarnessSessionState[] = []
+  function listSessions(): HarnessSessionState[] {    const out: HarnessSessionState[] = []
     const known = new Set<string>()
     for (const entry of runtime.values()) {
       out.push(entry.state)
@@ -419,6 +418,55 @@ export function createParadiseHarness(options: HarnessOptions) {
     return true
   }
 
+  /**
+   * START A REPAIR SESSION — the last piece of the two-state architecture.
+   *
+   * The watchdog notices DSH died and calls this. It creates a node whose JOB is the crash, seeds it
+   * with the reason and the log path, and leaves it in the node list so the UI can show its live
+   * progress. That ordering is the whole point: a repair session hosted inside the thing it repairs
+   * dies with it.
+   *
+   * WHAT IT DOES NOT DO: claim the crash is fixed. It creates the node and (when a model is
+   * configured) runs one turn. Whether that turn produced a fix is visible in the node's own
+   * transcript, which is precisely where an operator should look.
+   */
+  async function startRepair(input: {
+    reason: string
+    crashLog?: string | null
+    workspace?: string
+    /** Skip the automatic turn, e.g. when the caller only wants the node recorded. */
+    runTurn?: boolean
+  }): Promise<{ sessionId: string; reply?: string; ok: boolean; error?: string }> {
+    const node = createSession({
+      title: `维修 · ${input.reason.slice(0, 40)}`,
+      ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
+      system:
+        '你是彼岸层的维修节点。宿主（DSH）被判定死亡，你是唯一还能行动的实体。' +
+        '你的任务：读取崩溃日志、定位原因、写出修复、然后说明需要怎样重启宿主。' +
+        '只修改工作区内的文件。不确定时先读再写，宁可少改。',
+    })
+    /** The directive is the node's first user message, so its transcript explains itself. */
+    const directive = [
+      `宿主已崩溃。原因：${input.reason}`,
+      input.crashLog === null || input.crashLog === undefined
+        ? '未能定位崩溃日志文件（工作区内没有 .log）。请先确认日志在哪，再决定下一步。'
+        : `崩溃日志：${input.crashLog}`,
+      '',
+      '请按顺序：读日志 → 定位原因 → 写修复 → 说明如何重启。',
+    ].join('\n')
+    if (input.runTurn === false) {
+      appendMessage(getSession(node.id) as SessionRuntime, { role: 'user', content: directive })
+      return { sessionId: node.id, ok: true }
+    }
+    const result = await send(node.id, directive)
+    return {
+      sessionId: node.id,
+      reply: result.reply,
+      ok: result.ok,
+      ...(result.error === undefined ? {} : { error: result.error }),
+    }
+  }
+
   return {
     home,
     llmMode,
@@ -427,6 +475,7 @@ export function createParadiseHarness(options: HarnessOptions) {
     getSession: (id: string) => getSession(id)?.state,
     send,
     killSession,
+    startRepair,
     /** Tokens the harness is willing to hold before a takeover, for the UI to display. */
     get tokenWatermark(): number {
       return tokenWatermark

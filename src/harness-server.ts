@@ -57,6 +57,14 @@ export interface HarnessSessionState {
   approxTokens: number
   /** How many soft takeovers have fired for this session. */
   takeovers: number
+  /**
+   * How many times a reply hit the output cap and had to be continued.
+   *
+   * EXPOSED ON THE STATE, not only on the events: the UI polls `/api/state`, and a count that only
+   * existed in a transient event would be invisible after a refresh. A rising number here is the
+   * signal that the model's `maxTokens` is too low for the answers this session is producing.
+   */
+  truncations?: number
   createdAt: string
   updatedAt: string
 }
@@ -88,6 +96,7 @@ export type HarnessEvent =
   | { readonly type: 'round'; readonly id: string; readonly round: number }
   | { readonly type: 'tool-call'; readonly id: string; readonly name: string }
   | { readonly type: 'tool-result'; readonly id: string; readonly name: string; readonly ok: boolean }
+  | { readonly type: 'truncated'; readonly id: string; readonly round: number; readonly continuations: number }
   | { readonly type: 'reply'; readonly id: string; readonly text: string }
   | { readonly type: 'takeover'; readonly id: string; readonly reason: string; readonly injected: string }
   | { readonly type: 'error'; readonly id: string; readonly message: string }
@@ -101,6 +110,14 @@ export interface TurnResult {
   readonly ok: boolean
   readonly error?: string
   readonly takeover?: string
+  /**
+   * The reply hit the output cap and could not be finished within the continuation budget.
+   *
+   * SEPARATE FROM `error` ON PURPOSE. `ok: false` plus `error` reads as "the turn failed", which is
+   * the wrong message for a partial answer a user should still be able to read. A caller checking
+   * `truncated` can show the text WITH a warning instead of discarding it.
+   */
+  readonly truncated?: boolean
 }
 
 interface SessionRuntime {
@@ -376,6 +393,18 @@ export function createParadiseHarness(options: HarnessOptions) {
               /** Consecutive failures drive the takeover signal. A success resets it. */
               entry.state.consecutiveFailures = event.ok ? 0 : entry.state.consecutiveFailures + 1
             }
+            /**
+             * TRUNCATION REACHES THE HOST'S OWN EVENT STREAM.
+             *
+             * The loop already recovers by continuing, but a truncation is a fact the UI must be
+             * able to show: it explains why one turn took two model calls, and a rising count is the
+             * operator's signal that `maxTokens` is set too low. Recovered truncations are counted
+             * exactly like fatal ones — the difference is only in the final result.
+             */
+            if (event.type === 'truncated') {
+              entry.state.truncations = (entry.state.truncations ?? 0) + 1
+              emit({ type: 'truncated', id, round: event.round, continuations: event.continuations })
+            }
           },
         })
         /**
@@ -397,6 +426,8 @@ export function createParadiseHarness(options: HarnessOptions) {
           ok: result.error === undefined,
           ...(result.error === undefined ? {} : { error: `${result.error.code}: ${result.error.message}` }),
           ...(takeover === undefined ? {} : { takeover }),
+          /** Carried through so the UI can badge the reply instead of presenting it as complete. */
+          ...(result.truncated === true ? { truncated: true } : {}),
         }
       } catch (error) {
         const message = String((error as { message?: unknown })?.message ?? error)

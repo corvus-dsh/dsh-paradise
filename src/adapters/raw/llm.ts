@@ -24,6 +24,7 @@
 
 import type {
   ChatMessage,
+  FinishReason,
   GenerateOptions,
   GenerationResult,
   LLMAdapter,
@@ -142,6 +143,27 @@ function toWireTool(tool: ToolSchema): { type: 'function'; function: { name: str
  * crashed", when the correct behaviour is to hand the failure BACK to the model as a tool error so it
  * can correct itself.
  */
+/**
+ * Normalise a provider's `finish_reason` into the protocol's closed vocabulary.
+ *
+ * WHY A MAPPING AND NOT A CAST: the wire value is a free string from a third party. Passing it
+ * through would let a typo (`'lenght'`) become a value no caller checks for, which is worse than
+ * `'unknown'` because it looks meaningful.
+ *
+ * WHY `'unknown'` AND NOT `'stop'`: the whole point of the field is to distinguish "finished" from
+ * "cut off". Defaulting an absent reason to `'stop'` would recreate the original bug on any provider
+ * that omits the field.
+ */
+function asFinishReason(value: unknown): FinishReason {
+  if (typeof value !== 'string') return 'unknown'
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'stop') return 'stop'
+  if (normalized === 'length') return 'length'
+  if (normalized === 'tool_calls' || normalized === 'function_call') return 'tool_calls'
+  if (normalized === 'content_filter') return 'content_filter'
+  return 'unknown'
+}
+
 function parseArguments(raw: unknown): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {
   if (raw === null || raw === undefined || raw === '') return { ok: true, value: {} }
   if (typeof raw === 'object') return { ok: true, value: raw as Record<string, unknown> }
@@ -318,6 +340,18 @@ export function createRawLlm(options: RawLlmOptions): LLMAdapter {
         text: String(choice?.message?.content ?? ''),
         toolCalls,
         model: String(payload?.model ?? settings.model),
+        /**
+         * THE FIELD THAT WAS ALWAYS PRESENT AND NEVER READ.
+         *
+         * OpenAI-compatible providers put `finish_reason` on the same `choice` object as the
+         * message; this adapter read `message` and ignored the sibling. So `length` — "the reply hit
+         * the output cap and is INCOMPLETE" — arrived here and died, and the loop above saw a
+         * perfectly normal success.
+         *
+         * `'unknown'` when the provider omits it: guessing `'stop'` would recreate the bug on any
+         * API that does not report a reason.
+         */
+        finishReason: asFinishReason(choice?.finish_reason),
         ...(payload?.usage === undefined
           ? {}
           : {
@@ -403,6 +437,11 @@ export function createRawLlm(options: RawLlmOptions): LLMAdapter {
             text: lastText,
             toolCalls: [],
             model,
+            /**
+             * A FAILED CALL HAS NO STOP REASON. `'unknown'` states that, and it is the truthful
+             * answer: the provider never finished, so there is nothing to report about how.
+             */
+            finishReason: 'unknown' as FinishReason,
             error: {
               code: answer.quota === true ? 'LLM_QUOTA_EXHAUSTED' : 'LLM_CALL_FAILED',
               stage: 'generate',
@@ -419,13 +458,32 @@ export function createRawLlm(options: RawLlmOptions): LLMAdapter {
         if (answer.result.usage !== undefined) usage = answer.result.usage
 
         /** NO TOOL CALLS MEANS DONE — checked first, so a plain answer never costs an extra round. */
+        /**
+         * CARRY THE REASON THROUGH BOTH EXIT PATHS.
+         *
+         * The adapter runs several rounds internally when a tool runner is supplied; the reason
+         * that matters is the one from the FINAL call, because that is the call whose text the
+         * caller receives. Passing the earlier one would attribute a truncation to the wrong round.
+         */
         if (answer.result.toolCalls.length === 0) {
-          return { text: lastText, toolCalls: [], model, ...(usage === undefined ? {} : { usage }) }
+          return {
+            text: lastText,
+            toolCalls: [],
+            model,
+            finishReason: answer.result.finishReason,
+            ...(usage === undefined ? {} : { usage }),
+          }
         }
 
         /** Exit 3: no runner, so the calls go back to the caller unexecuted and un-dropped. */
         if (options.executeTool === undefined) {
-          return { text: lastText, toolCalls: answer.result.toolCalls, model, ...(usage === undefined ? {} : { usage }) }
+          return {
+            text: lastText,
+            toolCalls: answer.result.toolCalls,
+            model,
+            finishReason: answer.result.finishReason,
+            ...(usage === undefined ? {} : { usage }),
+          }
         }
 
         /** Exit 2: run what the model asked for, feed the results back, ask again. */

@@ -58,6 +58,14 @@ export interface AgentTurnResult {
   }>
   /** Memory context injected into this turn, if any. Empty string when nothing was recalled. */
   readonly recalled: string
+  /**
+   * True when the final text ended on a `length` stop and the continuation budget ran out.
+   *
+   * A caller that only reads `error` would still see code `TRUNCATED`; this flag exists so a caller
+   * can decide to SHOW the partial answer rather than treat the turn as failed. Both are honest
+   * representations of the same fact, and neither is silence.
+   */
+  readonly truncated?: boolean
   readonly error?: { readonly code: string; readonly message: string }
 }
 
@@ -66,6 +74,14 @@ export type AgentLoopEvent =
   | { readonly type: 'round'; readonly round: number }
   | { readonly type: 'tool-call'; readonly name: string; readonly arguments: Record<string, unknown> }
   | { readonly type: 'tool-result'; readonly name: string; readonly ok: boolean; readonly ms: number; readonly error?: string }
+  /**
+   * The model stopped because it hit the output cap, and the loop is continuing.
+   *
+   * EMITTED ON EVERY OCCURRENCE, including the ones that are recovered. A truncation that the loop
+   * silently repaired is still a fact an operator wants — it explains why a turn took two calls, and
+   * a rising count is the signal that `maxTokens` is set too low.
+   */
+  | { readonly type: 'truncated'; readonly round: number; readonly continuations: number; readonly budget: number }
   | { readonly type: 'answer'; readonly text: string }
 
 export interface AgentLoopOptions {
@@ -88,6 +104,14 @@ export interface AgentLoopOptions {
   readonly maxRounds?: number
   /** Per-round model options passed through to the adapter. */
   readonly generateOptions?: Omit<GenerateOptions, 'tools' | 'system'>
+  /**
+   * How many times a `length`-truncated answer may be continued. Default 2.
+   *
+   * Zero disables continuation: the turn then ends immediately with `TRUNCATED`, which is the
+   * correct configuration for a caller that would rather show a partial answer than pay for a
+   * second call.
+   */
+  readonly maxContinuations?: number
   readonly onEvent?: (event: AgentLoopEvent) => void
 }
 
@@ -111,6 +135,15 @@ function schemasOf(tools: ReadonlyMap<string, AgentTool>): ToolSchema[] {
  */
 export async function runAgentTurn(input: string, options: AgentLoopOptions): Promise<AgentTurnResult> {
   const maxRounds = Math.max(1, options.maxRounds ?? 8)
+  /**
+   * HOW MANY TIMES A TRUNCATED ANSWER MAY BE CONTINUED.
+   *
+   * Two, because each continuation is another billed call and no answer a human reads is three
+   * truncations long. The cap is what keeps a model that always hits `maxTokens` from looping
+   * forever — and when it is reached, the turn ends with `TRUNCATED`, not with success.
+   */
+  const maxContinuations = Math.max(0, Math.trunc(options.maxContinuations ?? 2))
+  let truncations = 0
   const emit = options.onEvent ?? (() => {})
   const usedToolNames: string[] = []
   const executed: Array<{ name: string; arguments: Record<string, unknown>; ok: boolean; ms: number; error?: string }> = []
@@ -161,6 +194,58 @@ export async function runAgentTurn(input: string, options: AgentLoopOptions): Pr
 
     lastText = result.text
     const calls: readonly ToolCall[] = result.toolCalls
+
+    /**
+     * ── TRUNCATION: CONTINUE, OR SAY SO — NEVER STOP SILENTLY ──────────────────────────────────
+     *
+     * WHAT WENT WRONG: a long answer hit the provider's output cap and ended mid-sentence. The
+     * result carried `error: undefined`, so this loop treated it as a finished turn, emitted
+     * `answer`, and returned success. Nothing in the result, the event stream or the UI indicated
+     * the reply was incomplete — the only way to notice was for a human to read the cut-off text.
+     *
+     * THE FIX, IN THE ORDER OF PREFERENCE:
+     *
+     *   1. `length` and budget left → append what arrived and ask for the continuation. The model
+     *      resumes from its own last sentence, so the user sees one continuous answer.
+     *   2. `length` and the budget exhausted → return with `TRUNCATED`, so the caller CANNOT mistake
+     *      it for a complete answer.
+     *
+     * The budget exists because a model that always hits the cap would otherwise loop forever: each
+     * continuation is another billed call. Two continuations covers any answer a human will read.
+     */
+    if (result.finishReason === 'length') {
+      truncations += 1
+      /**
+       * A truncated turn may still have produced tool calls. Handling tools first would be wrong:
+       * the arguments of a half-emitted call are usually incomplete, and running them executes a
+       * guess. The text is kept and the model is asked to finish its thought instead.
+       */
+      if (result.text.length > 0) await options.messages.append({ role: 'assistant', content: result.text })
+      emit({ type: 'truncated', round: rounds, continuations: truncations - 1, budget: maxContinuations })
+      if (truncations > maxContinuations) {
+        return {
+          text: lastText,
+          rounds,
+          toolCalls: executed,
+          recalled,
+          truncated: true,
+          error: {
+            code: 'TRUNCATED',
+            message: `回答因长度被截断，已自动续写 ${maxContinuations} 次仍未结束（finish_reason=length）`,
+          },
+        }
+      }
+      /**
+       * ASK FOR THE CONTINUATION EXPLICITLY. An empty prompt would be ambiguous — some providers
+       * treat it as a fresh turn and drop the thread. This instruction is the smallest one that
+       * makes "keep going from where you stopped" unambiguous.
+       */
+      await options.messages.append({
+        role: 'user',
+        content: '[系统] 上一条回答因长度限制被截断。请从中断处继续输出，不要重复已输出的内容，不要重新开始。',
+      })
+      continue
+    }
 
     /** 2. No tool requested means the turn is finished. */
     if (calls.length === 0) {

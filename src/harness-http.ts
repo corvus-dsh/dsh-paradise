@@ -134,6 +134,7 @@ const PAGE = `<!doctype html>
   <div class="kv"><span>运行中</span><span id="s-running">0</span></div>
   <div class="kv"><span>已死亡</span><span id="s-dead">0</span></div>
   <div class="kv"><span>软接管次数</span><span id="s-takeovers">0</span></div>
+  <div class="kv"><span>截断次数</span><span id="s-truncations">0</span></div>
   <div class="panel-title">记忆库</div>
   <div class="kv"><span>技能</span><span id="m-skills">-</span></div>
   <div class="kv"><span>事实</span><span id="m-facts">-</span></div>
@@ -168,6 +169,17 @@ const PAGE = `<!doctype html>
       meta.textContent = (STATUS_LABEL[session.status] || session.status) +
         ' · ' + (session.messages || []).length + ' 条 · ' + (session.approxTokens || 0) + ' tok';
       meta.className = 'meta ' + (STATUS_CLASS[session.status] || '');
+      /**
+       * THE TRUNCATION BADGE.
+       *
+       * A cut-off reply and a finished one look identical in a transcript — the text simply stops.
+       * This badge is the only thing that makes the difference visible without reading every answer,
+       * and a rising count is the operator's evidence that maxTokens is set too low.
+       */
+      if ((session.truncations || 0) > 0) {
+        meta.textContent += ' · ⚠ 截断 ' + session.truncations;
+        meta.className = 'meta status-warn';
+      }
       li.appendChild(meta);
       li.onclick = () => selectSession(session.id);
       list.appendChild(li);
@@ -196,6 +208,19 @@ const PAGE = `<!doctype html>
     $('s-running').textContent = payload.stats.running;
     $('s-dead').textContent = payload.stats.dead;
     $('s-takeovers').textContent = payload.stats.takeovers;
+    $('s-truncations').textContent = (payload.sessions || [])
+      .reduce((sum, session) => sum + (session.truncations || 0), 0);
+    /**
+     * A non-zero truncation count is a WARNING, not a neutral statistic: it means replies are being
+     * cut off, and the fix is a configuration change (maxTokens) the operator needs to make.
+     *
+     * NOTE: no backticks in this browser block. The whole page is one template string, so a stray
+     * backtick here closes it and the TypeScript parser then reads JavaScript as TypeScript — which
+     * is exactly the "Expected a semicolon" build failure this comment replaced.
+     */
+    $('s-truncations').className = ((payload.sessions || []).reduce((sum, session) => sum + (session.truncations || 0), 0) > 0)
+      ? 'status-warn'
+      : '';
     const memory = payload.memory || {};
     $('m-skills').textContent = memory.skills ?? '-';
     $('m-facts').textContent = memory.facts ?? '-';
@@ -429,6 +454,8 @@ export function createHarnessServer(options: HarnessServerOptions) {
           approxTokens: session.approxTokens,
           consecutiveFailures: session.consecutiveFailures,
           takeovers: session.takeovers,
+          /** How many replies were cut off by the output cap; the UI badges any non-zero value. */
+          truncations: session.truncations ?? 0,
           deathReason: session.deathReason ?? null,
           updatedAt: session.updatedAt,
         })),

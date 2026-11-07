@@ -1839,6 +1839,23 @@ function planRelease(current                         , held             )       
                                              
  
 
+/**
+ * WHY THE MODEL STOPPED — and why this is a REQUIRED field rather than an optional one.
+ *
+ * THE INCIDENT: a long answer hit the provider's output limit and simply ended mid-sentence. The
+ * loop saw a normal result with `error: undefined`, treated it as a finished turn, and reported
+ * success. Nothing anywhere said "this was cut off". From the outside it looked like the model had
+ * chosen to stop, so the only recovery available was a human noticing.
+ *
+ * `length` is the one value that means "the reply is incomplete, ask again". Without it on the
+ * result, no caller can distinguish "finished" from "truncated" — and a harness that cannot tell
+ * those apart will always present truncation as completion.
+ *
+ * Values follow the OpenAI-compatible wire format because that is what the raw adapter speaks; an
+ * adapter that cannot observe the reason reports `'unknown'` rather than guessing `'stop'`.
+ */
+                                                                                          
+
 /** What one generation produced. */
                                    
                                                                         
@@ -1846,6 +1863,13 @@ function planRelease(current                         , held             )       
                                          
                                                                                       
                         
+     
+                           
+    
+                                                                                                
+                                                        
+     
+                                     
                                                                                     
                                                                            
                                   
@@ -6750,6 +6774,7 @@ function parseStorageTier(value         )              {
 
              
               
+               
                   
                    
              
@@ -6868,6 +6893,27 @@ function toWireTool(tool            )                                           
  * crashed", when the correct behaviour is to hand the failure BACK to the model as a tool error so it
  * can correct itself.
  */
+/**
+ * Normalise a provider's `finish_reason` into the protocol's closed vocabulary.
+ *
+ * WHY A MAPPING AND NOT A CAST: the wire value is a free string from a third party. Passing it
+ * through would let a typo (`'lenght'`) become a value no caller checks for, which is worse than
+ * `'unknown'` because it looks meaningful.
+ *
+ * WHY `'unknown'` AND NOT `'stop'`: the whole point of the field is to distinguish "finished" from
+ * "cut off". Defaulting an absent reason to `'stop'` would recreate the original bug on any provider
+ * that omits the field.
+ */
+function asFinishReason(value         )               {
+  if (typeof value !== 'string') return 'unknown'
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'stop') return 'stop'
+  if (normalized === 'length') return 'length'
+  if (normalized === 'tool_calls' || normalized === 'function_call') return 'tool_calls'
+  if (normalized === 'content_filter') return 'content_filter'
+  return 'unknown'
+}
+
 function parseArguments(raw         )                                                                                {
   if (raw === null || raw === undefined || raw === '') return { ok: true, value: {} }
   if (typeof raw === 'object') return { ok: true, value: raw                            }
@@ -7044,6 +7090,18 @@ function createRawLlm(options               )             {
         text: String(choice?.message?.content ?? ''),
         toolCalls,
         model: String(payload?.model ?? settings.model),
+        /**
+         * THE FIELD THAT WAS ALWAYS PRESENT AND NEVER READ.
+         *
+         * OpenAI-compatible providers put `finish_reason` on the same `choice` object as the
+         * message; this adapter read `message` and ignored the sibling. So `length` — "the reply hit
+         * the output cap and is INCOMPLETE" — arrived here and died, and the loop above saw a
+         * perfectly normal success.
+         *
+         * `'unknown'` when the provider omits it: guessing `'stop'` would recreate the bug on any
+         * API that does not report a reason.
+         */
+        finishReason: asFinishReason(choice?.finish_reason),
         ...(payload?.usage === undefined
           ? {}
           : {
@@ -7129,6 +7187,11 @@ function createRawLlm(options               )             {
             text: lastText,
             toolCalls: [],
             model,
+            /**
+             * A FAILED CALL HAS NO STOP REASON. `'unknown'` states that, and it is the truthful
+             * answer: the provider never finished, so there is nothing to report about how.
+             */
+            finishReason: 'unknown'                ,
             error: {
               code: answer.quota === true ? 'LLM_QUOTA_EXHAUSTED' : 'LLM_CALL_FAILED',
               stage: 'generate',
@@ -7145,13 +7208,32 @@ function createRawLlm(options               )             {
         if (answer.result.usage !== undefined) usage = answer.result.usage
 
         /** NO TOOL CALLS MEANS DONE — checked first, so a plain answer never costs an extra round. */
+        /**
+         * CARRY THE REASON THROUGH BOTH EXIT PATHS.
+         *
+         * The adapter runs several rounds internally when a tool runner is supplied; the reason
+         * that matters is the one from the FINAL call, because that is the call whose text the
+         * caller receives. Passing the earlier one would attribute a truncation to the wrong round.
+         */
         if (answer.result.toolCalls.length === 0) {
-          return { text: lastText, toolCalls: [], model, ...(usage === undefined ? {} : { usage }) }
+          return {
+            text: lastText,
+            toolCalls: [],
+            model,
+            finishReason: answer.result.finishReason,
+            ...(usage === undefined ? {} : { usage }),
+          }
         }
 
         /** Exit 3: no runner, so the calls go back to the caller unexecuted and un-dropped. */
         if (options.executeTool === undefined) {
-          return { text: lastText, toolCalls: answer.result.toolCalls, model, ...(usage === undefined ? {} : { usage }) }
+          return {
+            text: lastText,
+            toolCalls: answer.result.toolCalls,
+            model,
+            finishReason: answer.result.finishReason,
+            ...(usage === undefined ? {} : { usage }),
+          }
         }
 
         /** Exit 2: run what the model asked for, feed the results back, ask again. */
@@ -9696,6 +9778,14 @@ function connectNetworkNode(options                      )                      
     
                                                                                                 
                            
+     
+                                                                                           
+    
+                                                                                                    
+                                                                                                
+                                                              
+     
+                              
                                                                       
  
 
@@ -9704,6 +9794,14 @@ function connectNetworkNode(options                      )                      
                                                       
                                                                                                       
                                                                                                                                
+     
+                                                                                 
+    
+                                                                                                   
+                                                                                                     
+                                                                  
+     
+                                                                                                                   
                                                       
 
                                    
@@ -9726,6 +9824,14 @@ function connectNetworkNode(options                      )                      
                              
                                                                
                                                                       
+     
+                                                                            
+    
+                                                                                              
+                                                                                              
+                 
+     
+                                    
                                                     
  
 
@@ -9749,6 +9855,15 @@ function schemasOf(tools                                )               {
  */
 async function runAgentTurn(input        , options                  )                           {
   const maxRounds = Math.max(1, options.maxRounds ?? 8)
+  /**
+   * HOW MANY TIMES A TRUNCATED ANSWER MAY BE CONTINUED.
+   *
+   * Two, because each continuation is another billed call and no answer a human reads is three
+   * truncations long. The cap is what keeps a model that always hits `maxTokens` from looping
+   * forever — and when it is reached, the turn ends with `TRUNCATED`, not with success.
+   */
+  const maxContinuations = Math.max(0, Math.trunc(options.maxContinuations ?? 2))
+  let truncations = 0
   const emit = options.onEvent ?? (() => {})
   const usedToolNames           = []
   const executed                                                                                                       = []
@@ -9799,6 +9914,58 @@ async function runAgentTurn(input        , options                  )           
 
     lastText = result.text
     const calls                      = result.toolCalls
+
+    /**
+     * ── TRUNCATION: CONTINUE, OR SAY SO — NEVER STOP SILENTLY ──────────────────────────────────
+     *
+     * WHAT WENT WRONG: a long answer hit the provider's output cap and ended mid-sentence. The
+     * result carried `error: undefined`, so this loop treated it as a finished turn, emitted
+     * `answer`, and returned success. Nothing in the result, the event stream or the UI indicated
+     * the reply was incomplete — the only way to notice was for a human to read the cut-off text.
+     *
+     * THE FIX, IN THE ORDER OF PREFERENCE:
+     *
+     *   1. `length` and budget left → append what arrived and ask for the continuation. The model
+     *      resumes from its own last sentence, so the user sees one continuous answer.
+     *   2. `length` and the budget exhausted → return with `TRUNCATED`, so the caller CANNOT mistake
+     *      it for a complete answer.
+     *
+     * The budget exists because a model that always hits the cap would otherwise loop forever: each
+     * continuation is another billed call. Two continuations covers any answer a human will read.
+     */
+    if (result.finishReason === 'length') {
+      truncations += 1
+      /**
+       * A truncated turn may still have produced tool calls. Handling tools first would be wrong:
+       * the arguments of a half-emitted call are usually incomplete, and running them executes a
+       * guess. The text is kept and the model is asked to finish its thought instead.
+       */
+      if (result.text.length > 0) await options.messages.append({ role: 'assistant', content: result.text })
+      emit({ type: 'truncated', round: rounds, continuations: truncations - 1, budget: maxContinuations })
+      if (truncations > maxContinuations) {
+        return {
+          text: lastText,
+          rounds,
+          toolCalls: executed,
+          recalled,
+          truncated: true,
+          error: {
+            code: 'TRUNCATED',
+            message: `回答因长度被截断，已自动续写 ${maxContinuations} 次仍未结束（finish_reason=length）`,
+          },
+        }
+      }
+      /**
+       * ASK FOR THE CONTINUATION EXPLICITLY. An empty prompt would be ambiguous — some providers
+       * treat it as a fresh turn and drop the thread. This instruction is the smallest one that
+       * makes "keep going from where you stopped" unambiguous.
+       */
+      await options.messages.append({
+        role: 'user',
+        content: '[系统] 上一条回答因长度限制被截断。请从中断处继续输出，不要重复已输出的内容，不要重新开始。',
+      })
+      continue
+    }
 
     /** 2. No tool requested means the turn is finished. */
     if (calls.length === 0) {
@@ -11166,6 +11333,14 @@ async function dispatch(tickets                         , options               
                       
                          
                             
+     
+                                                                                           
+    
+                                                                                                    
+                                                                                                  
+                                                                           
+     
+                              
  
 
                           
@@ -11441,6 +11616,18 @@ function createParadiseHarness(options                ) {
               /** Consecutive failures drive the takeover signal. A success resets it. */
               entry.state.consecutiveFailures = event.ok ? 0 : entry.state.consecutiveFailures + 1
             }
+            /**
+             * TRUNCATION REACHES THE HOST'S OWN EVENT STREAM.
+             *
+             * The loop already recovers by continuing, but a truncation is a fact the UI must be
+             * able to show: it explains why one turn took two model calls, and a rising count is the
+             * operator's signal that `maxTokens` is set too low. Recovered truncations are counted
+             * exactly like fatal ones — the difference is only in the final result.
+             */
+            if (event.type === 'truncated') {
+              entry.state.truncations = (entry.state.truncations ?? 0) + 1
+              emit({ type: 'truncated', id, round: event.round, continuations: event.continuations })
+            }
           },
         })
         /**
@@ -11462,6 +11649,8 @@ function createParadiseHarness(options                ) {
           ok: result.error === undefined,
           ...(result.error === undefined ? {} : { error: `${result.error.code}: ${result.error.message}` }),
           ...(takeover === undefined ? {} : { takeover }),
+          /** Carried through so the UI can badge the reply instead of presenting it as complete. */
+          ...(result.truncated === true ? { truncated: true } : {}),
         }
       } catch (error) {
         const message = String((error                         )?.message ?? error)
@@ -11906,6 +12095,7 @@ const PAGE = `<!doctype html>
   <div class="kv"><span>运行中</span><span id="s-running">0</span></div>
   <div class="kv"><span>已死亡</span><span id="s-dead">0</span></div>
   <div class="kv"><span>软接管次数</span><span id="s-takeovers">0</span></div>
+  <div class="kv"><span>截断次数</span><span id="s-truncations">0</span></div>
   <div class="panel-title">记忆库</div>
   <div class="kv"><span>技能</span><span id="m-skills">-</span></div>
   <div class="kv"><span>事实</span><span id="m-facts">-</span></div>
@@ -11940,6 +12130,17 @@ const PAGE = `<!doctype html>
       meta.textContent = (STATUS_LABEL[session.status] || session.status) +
         ' · ' + (session.messages || []).length + ' 条 · ' + (session.approxTokens || 0) + ' tok';
       meta.className = 'meta ' + (STATUS_CLASS[session.status] || '');
+      /**
+       * THE TRUNCATION BADGE.
+       *
+       * A cut-off reply and a finished one look identical in a transcript — the text simply stops.
+       * This badge is the only thing that makes the difference visible without reading every answer,
+       * and a rising count is the operator's evidence that maxTokens is set too low.
+       */
+      if ((session.truncations || 0) > 0) {
+        meta.textContent += ' · ⚠ 截断 ' + session.truncations;
+        meta.className = 'meta status-warn';
+      }
       li.appendChild(meta);
       li.onclick = () => selectSession(session.id);
       list.appendChild(li);
@@ -11968,6 +12169,19 @@ const PAGE = `<!doctype html>
     $('s-running').textContent = payload.stats.running;
     $('s-dead').textContent = payload.stats.dead;
     $('s-takeovers').textContent = payload.stats.takeovers;
+    $('s-truncations').textContent = (payload.sessions || [])
+      .reduce((sum, session) => sum + (session.truncations || 0), 0);
+    /**
+     * A non-zero truncation count is a WARNING, not a neutral statistic: it means replies are being
+     * cut off, and the fix is a configuration change (maxTokens) the operator needs to make.
+     *
+     * NOTE: no backticks in this browser block. The whole page is one template string, so a stray
+     * backtick here closes it and the TypeScript parser then reads JavaScript as TypeScript — which
+     * is exactly the "Expected a semicolon" build failure this comment replaced.
+     */
+    $('s-truncations').className = ((payload.sessions || []).reduce((sum, session) => sum + (session.truncations || 0), 0) > 0)
+      ? 'status-warn'
+      : '';
     const memory = payload.memory || {};
     $('m-skills').textContent = memory.skills ?? '-';
     $('m-facts').textContent = memory.facts ?? '-';
@@ -12201,6 +12415,8 @@ function createHarnessServer(options                      ) {
           approxTokens: session.approxTokens,
           consecutiveFailures: session.consecutiveFailures,
           takeovers: session.takeovers,
+          /** How many replies were cut off by the output cap; the UI badges any non-zero value. */
+          truncations: session.truncations ?? 0,
           deathReason: session.deathReason ?? null,
           updatedAt: session.updatedAt,
         })),

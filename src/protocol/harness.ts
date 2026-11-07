@@ -56,6 +56,23 @@ export interface ToolCall {
   readonly arguments: Record<string, unknown>
 }
 
+/**
+ * WHY THE MODEL STOPPED — and why this is a REQUIRED field rather than an optional one.
+ *
+ * THE INCIDENT: a long answer hit the provider's output limit and simply ended mid-sentence. The
+ * loop saw a normal result with `error: undefined`, treated it as a finished turn, and reported
+ * success. Nothing anywhere said "this was cut off". From the outside it looked like the model had
+ * chosen to stop, so the only recovery available was a human noticing.
+ *
+ * `length` is the one value that means "the reply is incomplete, ask again". Without it on the
+ * result, no caller can distinguish "finished" from "truncated" — and a harness that cannot tell
+ * those apart will always present truncation as completion.
+ *
+ * Values follow the OpenAI-compatible wire format because that is what the raw adapter speaks; an
+ * adapter that cannot observe the reason reports `'unknown'` rather than guessing `'stop'`.
+ */
+export type FinishReason = 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'unknown'
+
 /** What one generation produced. */
 export interface GenerationResult {
   /** The assistant's text, possibly empty when it only called tools. */
@@ -63,6 +80,13 @@ export interface GenerationResult {
   readonly toolCalls: readonly ToolCall[]
   /** Which model actually answered — a fallback route must be visible, not silent. */
   readonly model: string
+  /**
+   * How the model stopped.
+   *
+   * REQUIRED, so a new adapter has to make a decision about it instead of inheriting a default.
+   * `'unknown'` is a legitimate answer; silence is not.
+   */
+  readonly finishReason: FinishReason
   readonly usage?: { readonly inputTokens?: number; readonly outputTokens?: number }
   /** Present when the call failed. The caller decides whether to retry. */
   readonly error?: ProtocolFailure

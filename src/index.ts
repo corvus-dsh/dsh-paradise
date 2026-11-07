@@ -459,6 +459,27 @@ export { dispatch }
 export type { DispatchReport, DispatcherEvent, DispatcherOptions, NodeRunner, TianheReceipt, TianheTicket } from './dispatcher.js'
 
 /**
+ * THE NATIVE HARNESS — this layer as the host, not a client of one.
+ *
+ * Everything above needed a host to supply sessions and a trigger. This supplies them: a session
+ * store, the turn loop, a tool registry, and the ignition that `spawnNode` was missing.
+ */
+import { createParadiseHarness } from './harness-server.js'
+export { createParadiseHarness }
+export type { HarnessEvent, HarnessOptions, HarnessSessionState, ParadiseHarness, SessionStatus, TurnResult } from './harness-server.js'
+
+/**
+ * THE HARNESS SERVER — the host and its browser UI in one process.
+ *
+ * `node dist/harness-server.js` starts it. The UI is inlined as source text so it cannot drift from
+ * the server that serves it, and the WebSocket is implemented on Node built-ins so a fresh machine
+ * needs no install to see the console.
+ */
+import { createHarnessServer } from './harness-http.js'
+export { createHarnessServer }
+export type { HarnessServerOptions } from './harness-http.js'
+
+/**
  * Test seam: the write SHAPE functions.
  *
  * These moved here from `dsh-observer/src/core/observer-inject.ts`, together with their tests: a

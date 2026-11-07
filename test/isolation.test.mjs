@@ -232,6 +232,20 @@ test('isolation: every host-specific file lives under adapters/', () => {
      */
     'spawn-node.ts',
     'dispatcher.ts',
+    /**
+     * `harness-server.ts`, `harness-http.ts`, `ws-server.ts` — THE HOST ITSELF.
+     *
+     * These are the files that make the claim "this layer is a host, not a client of one" true, so
+     * they must load on a machine with no host installed — which is precisely what a file under
+     * `adapters/<host>/` could not promise.
+     *
+     * `harness-server.ts` drives the loop and persists sessions; `harness-http.ts` serves the UI on
+     * Node built-ins; `ws-server.ts` implements RFC 6455 framing with `crypto` and `http`. None of
+     * them imports a host module — none of them CAN, because there is no host to import.
+     */
+    'harness-server.ts',
+    'harness-http.ts',
+    'ws-server.ts',
   ]
   const top = readdirSync(srcDir, { withFileTypes: true }).map((entry) => entry.name)
   const unexpected = top.filter((name) => !allowed.includes(name))

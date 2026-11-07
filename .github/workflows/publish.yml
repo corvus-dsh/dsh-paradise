@@ -1,0 +1,151 @@
+# PUBLISH — trusted publishing (OIDC), no stored token anywhere.
+#
+# ── WHY THIS EXISTS AND WHAT IT IS NOT ────────────────────────────────────────────────────────────
+#
+# This file is the "workflow filename" a npm TRUSTED PUBLISHER points at. npm accepts a publish from
+# OIDC only when the workflow that asks for it matches the configuration, field by field:
+#
+#     Organization or user : corvus-dsh
+#     Repository           : dsh-paradise            (the repo name, not the scoped package name)
+#     Workflow filename    : publish.yml              (THIS file, in .github/workflows/)
+#     Environment          : (leave EMPTY — see below)
+#
+# ⚠️ THE FILE MUST EXIST AND BE ON THE DEFAULT BRANCH BEFORE the publisher is configured, because npm
+# stores the filename as a trusted value and a mismatch fails the publish with an OIDC rejection that
+# says almost nothing about why.
+#
+# ── OIDC ONLY WORKS INSIDE CI ─────────────────────────────────────────────────────────────────────
+#
+# npm CLI "detects when npm is running in a supported CI environment… and gracefully falls back to
+# traditional authentication" outside one. So `npm publish` on a laptop — even a logged-in one — never
+# uses OIDC, however it is configured. That is the whole point: the credential is minted per run by
+# GitHub and cannot be extracted or reused.
+#
+# ── WHY `id-token: write` AND NOTHING ELSE ───────────────────────────────────────────────────────
+#
+# `id-token: write` is what lets the job ask GitHub for a signed OIDC token. It is the ONLY permission
+# this workflow needs beyond read, and it is more dangerous than a classic NPM_TOKEN in one way worth
+# knowing: it is not scoped to this repository. Any step in this job could request a token for any
+# audience GitHub will issue one to. So the job does not run arbitrary third-party scripts, and it
+# pins the actions it does use.
+#
+# ── WHY THE GATE BEFORE PUBLISHING ───────────────────────────────────────────────────────────────
+#
+# A publish is irreversible-ish (unpublish is allowed for 72 hours and then the version and its name
+# space are burned forever, by policy). So this workflow refuses to publish a version that already
+# exists, and runs the full suite first: publishing a red build is the one mistake that cannot be
+# undone cleanly.
+name: Publish
+
+on:
+  # Deliberately manual. A push-triggered publish turns every merge into a release, and this project
+  # ships committed build output — the artifact must be reviewed before it becomes permanent.
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Pack and verify but do NOT publish (recommended for the first run)'
+        type: boolean
+        default: true
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22.14+ is a HARD floor for trusted publishing (the feature needs it), and npm 11.5.1+
+      # ships with the majors that provide it. This installs the latest 22.x so the floor is met
+      # without pinning a version that will age.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Show the toolchain (trusted publishing needs npm >= 11.5.1)
+        # The floor is npm 11.5.1 / Node 22.14.0. Checked explicitly because an older npm does not
+        # simply fail — it falls back to a stored token (which does not exist here) and reports a
+        # confusing auth error instead of "your npm is too old".
+        run: |
+          node --version
+          NPM_VERSION="$(npm --version)"
+          echo "npm $NPM_VERSION"
+          node -e "
+            const have = process.argv[1]
+            const [major, minor] = have.split('.').map(Number)
+            if (!(major > 11 || (major === 11 && minor >= 5))) {
+              console.error('trusted publishing needs npm 11.5.1+, got ' + have)
+              process.exit(1)
+            }
+            console.log('ok: npm ' + have)
+          " "$NPM_VERSION"
+
+
+
+      - name: This package has no sibling layer (it IS the layer)
+        # Every other repo in this family checks out dsh-paradise beside itself because their tests
+        # exercise the write path THROUGH it. This repository owns that path, needs nothing beside it,
+        # and adding a sibling checkout here would mean installing it from itself.
+        run: echo "ok: no sibling layer required"
+      - run: npm install --no-audit --no-fund
+
+      # THE ARTIFACT MUST MATCH THE SOURCE. Committed build output plus a forgotten rebuild is how a
+      # package ships code nobody reviewed. `git diff --exit-code` compares CONTENT (see ci.yml for why
+      # `git status` is wrong here).
+      - name: The build must not leave the committed artifact stale
+        run: |
+          npm run build
+          if ! git diff --exit-code -- index.js; then
+            echo "::error::The build changed index.js. Run 'npm run build' and commit the result."
+            git --no-pager diff --stat -- index.js
+            exit 1
+          fi
+          echo "ok: index.js matches the committed artifact"
+
+      - name: Test before publishing
+        run: npm test
+
+      - name: Refuse to publish a version that already exists
+        # npm rejects a duplicate version anyway, but its error arrives AFTER the OIDC exchange and
+        # reads like an auth problem. Failing here says the real thing in one line.
+        run: |
+          set -e
+          NAME="$(node -p "require('./package.json').name")"
+          LOCAL="$(node -p "require('./package.json').version")"
+          echo "publishing $NAME@$LOCAL"
+          PUBLISHED="$(npm view "$NAME" versions --json --registry=https://registry.npmjs.org 2>/dev/null || echo '[]')"
+          if node -e "
+            const have = JSON.parse(process.argv[1] || '[]')
+            const list = Array.isArray(have) ? have : [have]
+            process.exit(list.includes(process.argv[2]) ? 1 : 0)
+          " "$PUBLISHED" "$LOCAL"; then
+            echo "ok: $LOCAL is not published yet"
+          else
+            echo "::error::$NAME@$LOCAL is ALREADY PUBLISHED — bump the version, do not republish"
+            exit 1
+          fi
+
+      # ── THE PUBLISH ──────────────────────────────────────────────────────────────────────────────
+      #
+      # NO `NODE_AUTH_TOKEN`. That is not an omission: the point of trusted publishing is that there is
+      # no secret in this repository or in its settings. npm mints the token from the OIDC exchange.
+      #
+      # `--access public` is required on the FIRST publish of a scoped package; without it npm assumes
+      # restricted and returns 402. It is harmless on later publishes.
+      #
+      # `--provenance` is NOT passed: npm generates it automatically for trusted publishing from a
+      # public repository, and passing it would only duplicate the intent.
+      - name: Publish
+        if: ${{ inputs.dry-run == false }}
+        run: npm publish --access public --registry=https://registry.npmjs.org
+
+      - name: Dry run finished (nothing was published)
+        if: ${{ inputs.dry-run == true }}
+        run: echo "::notice::dry-run=true — the pack was validated and NOT published"

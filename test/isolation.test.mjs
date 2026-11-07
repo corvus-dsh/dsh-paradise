@@ -207,6 +207,16 @@ test('isolation: every host-specific file lives under adapters/', () => {
      */
     'agent-loop.ts',
     'repair-session.ts',
+    /**
+     * `watchdog.ts` — THE TRIGGER.
+     *
+     * Allowed at the top level for the same reason as the two above, and for one more that is
+     * specific to it: a watchdog that lives inside the process it watches dies with that process,
+     * so it must be startable on a machine where the host has never run. `watchdog.ts` imports
+     * nothing at all — no protocol, no adapters — so it cannot even in principle reach a host
+     * module. The guard below asserts that.
+     */
+    'watchdog.ts',
   ]
   const top = readdirSync(srcDir, { withFileTypes: true }).map((entry) => entry.name)
   const unexpected = top.filter((name) => !allowed.includes(name))

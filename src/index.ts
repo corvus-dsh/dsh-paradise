@@ -426,6 +426,17 @@ export { REPAIR_TOOL_NAMES, joinPath, resolveInside, runRepairSession }
 export type { RepairSessionEvent, RepairSessionOptions, RepairSessionResult } from './repair-session.js'
 
 /**
+ * THE WATCHDOG — the trigger, as its own process.
+ *
+ * The repair machinery existed but nothing fired it; a human still had to open a terminal. A
+ * watchdog inside the host would die with the host, so `watchdog.ts` imports only the protocol
+ * and runs as a separate OS process.
+ */
+import { buildDiagnosis, createWatchdog } from './watchdog.js'
+export { buildDiagnosis, createWatchdog }
+export type { WatchdogEvent, WatchdogOptions, WatchdogProbe, WatchdogReport, WatchdogState } from './watchdog.js'
+
+/**
  * Test seam: the write SHAPE functions.
  *
  * These moved here from `dsh-observer/src/core/observer-inject.ts`, together with their tests: a

@@ -69,6 +69,13 @@ jobs:
           node-version: '22.14.0'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Upgrade npm to the trusted-publishing floor
+        # setup-node@v4 pins the npm that ships WITH the Node version, and Node 22.14.x ships npm
+        # 10.x — below the 11.5.1 floor trusted publishing requires. Without this the publish fails
+        # with an auth error that never mentions the version. Installing it explicitly is also why
+        # the workflow can state the floor instead of hoping the base image moved.
+        run: npm install --global npm@latest --registry=https://registry.npmjs.org
+
       - name: Show the toolchain (trusted publishing needs npm >= 11.5.1)
         # The floor is npm 11.5.1 / Node 22.14.0. Checked explicitly because an older npm does not
         # simply fail — it falls back to a stored token (which does not exist here) and reports a

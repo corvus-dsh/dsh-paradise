@@ -87,17 +87,94 @@ const { parentPort, workerData } = require('node:worker_threads')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const roots = workerData.roots.map((root) => path.resolve(root))
-
 /**
  * THE ALLOWLIST IS ENFORCED HERE, in the bootstrap — not in the tool, and not in the caller.
  * A check the tool performs on itself is a check a tool can skip.
+ *
+ * ── v2.2.0: THE CHECK NOW USES REAL PATHS, NOT PATH STRINGS ─────────────────────────────────
+ *
+ * WHAT WAS WRONG. The old implementation compared \`path.resolve(target)\` against the roots.
+ * \`path.resolve\` is LEXICAL: it collapses \`.\` and \`..\`, and it does NOT resolve symbolic links
+ * or Windows directory junctions. So the predicate answered "does this STRING start with a root"
+ * instead of "is this FILE inside a root" — and those differ whenever a link is involved.
+ *
+ * MEASURED CONSEQUENCE (this is not theory). With a junction inside a sandbox root that points
+ * outside it, created by an unprivileged user with \`mklink /J\`:
+ *
+ *     api.readFile('<root>\\escape-link\\secret.txt')   -> READ the outside file
+ *     api.writeFile('<root>\\escape-link\\pwned.txt')   -> WROTE outside the sandbox
+ *
+ * while the direct path, the \`..\` traversal, and the case variants were all correctly DENIED.
+ * That contrast is what identifies the defect precisely: lexical normalization handles \`..\`,
+ * and only real-path resolution handles links.
+ *
+ * WHY IT MATTERED. The roots include the user's home directory by default, and a home directory
+ * very often already contains a junction to somewhere else. The code this sandbox executes is
+ * MODEL-GENERATED repair code — written from whatever context the model was given, which in a
+ * self-repair scenario is exactly the context an attacker would want to poison. Reading
+ * \`~/.ssh/id_rsa\` or \`.aws/credentials\` through a pre-existing link needs no attacker action
+ * beyond the injection.
+ *
+ * HOW IT IS FIXED. Resolve BOTH sides with \`fs.realpathSync\`, then compare with a path
+ * separator. Two details are load-bearing:
+ *
+ *   1. A target that does not exist yet (the \`writeFile\` case) cannot be realpath'd directly.
+ *      So the nearest EXISTING ancestor is resolved, and the unresolved remainder is appended
+ *      lexically — refusing to walk up a symlink that does not exist yet, while still checking
+ *      the directory path that will be created.
+ *   2. Roots are resolved once, at startup. If a root itself is a link, the tool is confined to
+ *      what that root really points at, which is what the operator meant by naming it.
+ *
+ * THE FAILURE MODE IS DENY. If realpath throws for a reason other than "not there yet", the
+ * answer is "outside" — an allowlist that fails open is an allowlist that does not exist.
  */
+
+function realRoots(list) {
+  const out = []
+  for (const root of list) {
+    try {
+      out.push(fs.realpathSync(root))
+    } catch {
+      // A root that does not exist cannot contain anything. Dropping it is stricter than keeping
+      // its lexical form, which would match a path that is not really there.
+    }
+  }
+  return out
+}
+
+const roots = realRoots(workerData.roots)
+
+/**
+ * The real path of \`target\`, resolving symlinks/junctions, allowing for a target that does not
+ * exist yet by resolving its nearest existing ancestor and appending the rest lexically.
+ */
+function realish(target) {
+  const absolute = path.resolve(String(target))
+  let probe = absolute
+  const tail = []
+  for (;;) {
+    try {
+      const real = fs.realpathSync(probe)
+      return tail.length === 0 ? real : path.join(real, ...tail.reverse())
+    } catch {
+      const parent = path.dirname(probe)
+      if (parent === probe) throw Object.assign(new Error('SANDBOX_DENIED: unresolvable path ' + absolute), { code: 'SANDBOX_DENIED' })
+      tail.push(path.basename(probe))
+      probe = parent
+    }
+  }
+}
+
 function within(target) {
-  const resolved = path.resolve(String(target))
+  let real
+  try {
+    real = realish(target)
+  } catch {
+    return false
+  }
   for (const root of roots) {
-    if (resolved === root) return true
-    if (resolved.startsWith(root + path.sep)) return true
+    if (real === root) return true
+    if (real.startsWith(root + path.sep)) return true
   }
   return false
 }

@@ -1,8 +1,25 @@
 # HARNESS_ARCHITECTURE.md — 彼岸层作为独立 Harness
 
-> 版本：v0.1　日期：2026-11-06
+> 版本：v0.2　日期：2026-11-07
 > 落点：`src/protocol/harness.ts`（协议）· `src/adapters/raw/`（实现）· `src/launcher.ts`（接管）
-> 验证：`_scratch/verify-exoskeleton.mjs` **51/51** · `_scratch/naked-node-bootstrap.mjs` **32/32**
+>
+> **如何自己验证这份文档（v0.2 修正）**
+>
+> 本文件早先引用过 `_scratch/verify-exoskeleton.mjs`（51/51）与
+> `_scratch/naked-node-bootstrap.mjs`（32/32）作为证据。**这两个文件从未进入版本库**，
+> 因此那些数字是无法核验的——引用不存在的证据比"暂时没做"更糟，已全部撤下。
+>
+> 现在每一条主张都对应一个**在本仓库里能直接跑的命令**：
+>
+> | 主张 | 复核命令 |
+> |---|---|
+> | CLI 存在且能启动 | `node --check dist/harness.js && node dist/harness.js --help` |
+> | 产物不含任何宿主符号 | `node -e "const s=require('fs').readFileSync('dist/harness.js','utf8');for(const k of ['sessionPersistence','sessionController','sessionQuery','createDshAdapters'])console.log(k, s.split(k).length-1)"` |
+> | 协议层纯度（无宿主字样） | `npm test` 里的 `protocol-purity.test.mjs` |
+> | 沙箱白名单与超时 | `npm test` 里的 sandbox 相关用例 |
+> | 全量回归 | `npm test`（CI 每次推送都跑） |
+>
+> 未完成的验证仍然未完成，写法也改了：不再引用脚本，而是直接说"未验证"（见 §6.3）。
 
 ---
 
@@ -163,8 +180,18 @@ hosted  ──失败达阈值──>  degraded  ──有模型──>  repairin
          + 一个 cwd（永不猜测）
 ```
 
-`_scratch/naked-node-bootstrap.mjs` 里的 `RawNodeAdapter` 已经**写了这 200 行**并证明可行。
-它现在在 `_scratch/`，还没有升格进 `adapters/raw/` —— 因为一旦升格，它就成为一个**被承诺的默认形状**，而那是需要单独决定的事。
+`adapters/raw/session.ts` 里的 `createRawSessionAdapter` 就是这 200 行的实现，**已经升格进
+`adapters/raw/`**（早期版本说它"还在 `_scratch/`"，那是过期的说法）。它只用 `node:fs` 与
+`node:path`，把会话写成本地 jsonl——与 DSH 的 `sessionPersistence` 毫无关系。
+
+自检命令：
+
+```
+node --check dist/harness.js
+node -e "const m=require('node:fs').readFileSync('dist/harness.js','utf8');console.log('host symbols:',['sessionPersistence','sessionController','sessionQuery','createDshAdapters'].map(k=>k+'='+(m.split(k).length-1)).join(' '))"
+```
+
+预期：`node --check` 退出 0，四个宿主符号全为 0。
 
 ### 4.3 缺的入口长什么样（草图，非承诺）
 
@@ -208,8 +235,9 @@ const launcher = createLauncher({
 ```
 
 **关键性质**：上层插件（`dsh-memory` / `dsh-graft-slice` / `dsh-observer`）**不知道自己在哪一种形态里**。
-这不是设计口号 —— `_scratch/naked-node-bootstrap.mjs` 的 32 项断言里，`dsh-memory` 在裸机 ctx 上
-跑出了与 DSH 上同样的四层记忆，而它的源码一个字符都没改。
+这不是设计口号，但它**还没有被完整验证**：`dsh-memory` 在裸机 ctx 上跑出四层记忆的说法，
+早先引用的是一个从未入库的脚本；现在只能说"未验证"，不能说"已证明"。`graft-slice` 与
+`observer` 则确认没在裸机上跑过（见表中第 2 条）。
 
 ---
 
@@ -230,11 +258,14 @@ const launcher = createLauncher({
 
 ### 6.1 v0.39 关闭的三条，各自的证据
 
-| 缺口 | 关闭它的东西 | 证据 |
+| 缺口 | 关闭它的东西 | 证据（可复跑，不是引用的文件名） |
 |---|---|---|
-| CLI 入口 | `src/harness.ts` → `dist/harness.js`（独立 bundle，15 模块） | `test/harness-cli.test.mjs` 8/8 |
-| 沙箱 | `adapters/raw/sandbox.ts`：worker + fs 白名单 + `require`/`process` 遮蔽 | `verify-emergency-loop` 的 §8（越界 + 死循环 + 遮蔽） |
-| 真实 kill | 假宿主进程真的被 `SIGKILL`，再真的被拉回来 | `verify-emergency-loop` 的 §5/§9 |
+| CLI 入口 | `src/harness.ts` → `dist/harness.js`（独立 bundle） | `node --check dist/harness.js` + `npm test` 里的 `harness-cli` 用例 |
+| 沙箱 | `adapters/raw/sandbox.ts`：worker + fs 白名单 + `require`/`process` 遮蔽 | `npm test` 里的 sandbox 用例（越界 + 死循环 + 遮蔽） |
+| 真实 kill | 假宿主进程真的被 `SIGKILL`，再真的被拉回来 | `npm test` 里的 launcher/watchdog 用例（真 spawn） |
+
+> **v0.2 修正**：上表原先引用 `verify-emergency-loop` 的 §5/§8/§9 作为证据，而该脚本
+> **从未进入版本库**。已改为指向仓库内真实的测试文件。原来的章节号引用无法核验，已删除。
 
 ### 6.2 沙箱**仍然不是**安全边界（这一条必须一直写着）
 

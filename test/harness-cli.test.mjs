@@ -139,3 +139,65 @@ test('harness: restart is REFUSED without --allow-restart, and says why', async 
   runtime.stop()
   assert.notEqual(result.state, 'hosted')
 })
+
+/**
+ * ── AUDIT P1-13: THE ROUTE CONFIG FILE WAS IGNORED ON THE MAIN PATH ─────────────────────────────
+ *
+ * WHAT WAS WRONG. `route-config.ts` exists for one reason its own header states: "An environment
+ * variable is fixed at process start… A file can be rewritten by a running process". That matters
+ * exactly for the incident this harness is built for — the key expired at 3am, the operator can
+ * rewrite a file, but cannot restart the watcher without defeating the point of the watcher.
+ *
+ * The main route, however, was built from env/CLI only. `routeConfigPath` went to the FALLBACK
+ * route and nowhere else. Measured: a `config.json` holding a valid `baseUrl` / `apiKey` / `model`
+ * produced "模型（未配置：只能检测与降级）" and `NO_LLM` on every repair. 153 lines of atomic
+ * write, three-source precedence and merge-not-replace code were dead where they were needed.
+ *
+ * THE PRECEDENCE IS THE CONTRACT: CLI flag > environment > file. Tested in all three directions,
+ * because "the file works" alone would let a later regression silently override an operator's
+ * explicit environment variable.
+ */
+test('audit P1-13: the route config FILE configures the main route, and env still wins over it', async () => {
+  const mod = await loadHarness()
+  const home = mkdtempSync(join(tmpdir(), 'harness-route-'))
+  const cfgPath = join(home, 'config.json')
+  writeFileSync(
+    cfgPath,
+    JSON.stringify({ baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'sk-file', model: 'file-model' }),
+    'utf8',
+  )
+  const parsed = mod.parseArgs([`--home=${home}`, `--route-config=${cfgPath}`])
+
+  // 1. FILE ONLY: no LLM_* in the env handed to resolveConfig.
+  const fromFile = mod.resolveConfig(parsed.values, {}, home)
+  assert.equal(fromFile.llm?.model, 'file-model', 'a config file alone must configure the main route')
+  assert.equal(fromFile.llm?.apiKey, 'sk-file')
+  assert.equal(fromFile.llm?.baseUrl, 'http://127.0.0.1:9/v1')
+
+  // 2. ENV WINS over the file.
+  const envOnly = { LLM_BASE_URL: 'http://127.0.0.1:10/v1', LLM_API_KEY: 'sk-env', LLM_MODEL: 'env-model' }
+  const fromEnv = mod.resolveConfig(parsed.values, envOnly, home)
+  assert.equal(fromEnv.llm?.model, 'env-model', 'environment must beat the file (CLI > env > file)')
+  assert.equal(fromEnv.llm?.apiKey, 'sk-env')
+
+  // 3. CLI WINS over both, for the two flags that exist. NOTE: there is deliberately NO
+  //    `--llm-api-key` flag — a key passed on the command line lands in the process list and in
+  //    shell history. So the key must come from env or the file; only model/baseUrl are CLI-settable.
+  const cliArgs = mod.parseArgs([
+    `--home=${home}`,
+    `--route-config=${cfgPath}`,
+    '--llm-model=cli-model',
+    '--llm-base-url=http://127.0.0.1:11/v1',
+  ])
+  const fromCli = mod.resolveConfig(cliArgs.values, envOnly, home)
+  assert.equal(fromCli.llm?.model, 'cli-model', 'the most explicit source must win for model')
+  assert.equal(fromCli.llm?.baseUrl, 'http://127.0.0.1:11/v1', 'and for baseUrl')
+  // The key cannot come from the CLI, so env supplies it — and env beats the file here too.
+  assert.equal(fromCli.llm?.apiKey, 'sk-env', 'the apiKey must fall back to env, never to a CLI flag')
+
+  // 4. A MISSING FILE degrades to the old behaviour instead of throwing: a repair path that dies on
+  //    a missing config would replace "your key expired" with "your file is absent".
+  const noFile = mod.parseArgs([`--home=${home}`, `--route-config=${join(home, 'nope.json')}`])
+  const degraded = mod.resolveConfig(noFile.values, {}, home)
+  assert.equal(degraded.llm, undefined, 'no route anywhere must mean no LLM, not a crash')
+})

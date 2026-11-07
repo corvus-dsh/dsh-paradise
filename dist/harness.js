@@ -2975,17 +2975,94 @@ const { parentPort, workerData } = require('node:worker_threads')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const roots = workerData.roots.map((root) => path.resolve(root))
-
 /**
  * THE ALLOWLIST IS ENFORCED HERE, in the bootstrap — not in the tool, and not in the caller.
  * A check the tool performs on itself is a check a tool can skip.
+ *
+ * ── v2.2.0: THE CHECK NOW USES REAL PATHS, NOT PATH STRINGS ─────────────────────────────────
+ *
+ * WHAT WAS WRONG. The old implementation compared \`path.resolve(target)\` against the roots.
+ * \`path.resolve\` is LEXICAL: it collapses \`.\` and \`..\`, and it does NOT resolve symbolic links
+ * or Windows directory junctions. So the predicate answered "does this STRING start with a root"
+ * instead of "is this FILE inside a root" — and those differ whenever a link is involved.
+ *
+ * MEASURED CONSEQUENCE (this is not theory). With a junction inside a sandbox root that points
+ * outside it, created by an unprivileged user with \`mklink /J\`:
+ *
+ *     api.readFile('<root>\\escape-link\\secret.txt')   -> READ the outside file
+ *     api.writeFile('<root>\\escape-link\\pwned.txt')   -> WROTE outside the sandbox
+ *
+ * while the direct path, the \`..\` traversal, and the case variants were all correctly DENIED.
+ * That contrast is what identifies the defect precisely: lexical normalization handles \`..\`,
+ * and only real-path resolution handles links.
+ *
+ * WHY IT MATTERED. The roots include the user's home directory by default, and a home directory
+ * very often already contains a junction to somewhere else. The code this sandbox executes is
+ * MODEL-GENERATED repair code — written from whatever context the model was given, which in a
+ * self-repair scenario is exactly the context an attacker would want to poison. Reading
+ * \`~/.ssh/id_rsa\` or \`.aws/credentials\` through a pre-existing link needs no attacker action
+ * beyond the injection.
+ *
+ * HOW IT IS FIXED. Resolve BOTH sides with \`fs.realpathSync\`, then compare with a path
+ * separator. Two details are load-bearing:
+ *
+ *   1. A target that does not exist yet (the \`writeFile\` case) cannot be realpath'd directly.
+ *      So the nearest EXISTING ancestor is resolved, and the unresolved remainder is appended
+ *      lexically — refusing to walk up a symlink that does not exist yet, while still checking
+ *      the directory path that will be created.
+ *   2. Roots are resolved once, at startup. If a root itself is a link, the tool is confined to
+ *      what that root really points at, which is what the operator meant by naming it.
+ *
+ * THE FAILURE MODE IS DENY. If realpath throws for a reason other than "not there yet", the
+ * answer is "outside" — an allowlist that fails open is an allowlist that does not exist.
  */
+
+function realRoots(list) {
+  const out = []
+  for (const root of list) {
+    try {
+      out.push(fs.realpathSync(root))
+    } catch {
+      // A root that does not exist cannot contain anything. Dropping it is stricter than keeping
+      // its lexical form, which would match a path that is not really there.
+    }
+  }
+  return out
+}
+
+const roots = realRoots(workerData.roots)
+
+/**
+ * The real path of \`target\`, resolving symlinks/junctions, allowing for a target that does not
+ * exist yet by resolving its nearest existing ancestor and appending the rest lexically.
+ */
+function realish(target) {
+  const absolute = path.resolve(String(target))
+  let probe = absolute
+  const tail = []
+  for (;;) {
+    try {
+      const real = fs.realpathSync(probe)
+      return tail.length === 0 ? real : path.join(real, ...tail.reverse())
+    } catch {
+      const parent = path.dirname(probe)
+      if (parent === probe) throw Object.assign(new Error('SANDBOX_DENIED: unresolvable path ' + absolute), { code: 'SANDBOX_DENIED' })
+      tail.push(path.basename(probe))
+      probe = parent
+    }
+  }
+}
+
 function within(target) {
-  const resolved = path.resolve(String(target))
+  let real
+  try {
+    real = realish(target)
+  } catch {
+    return false
+  }
   for (const root of roots) {
-    if (resolved === root) return true
-    if (resolved.startsWith(root + path.sep)) return true
+    if (real === root) return true
+    if (real.startsWith(root + path.sep)) return true
   }
   return false
 }
@@ -4729,6 +4806,41 @@ export function resolveConfig(values                               , env        
   const model = str('llm-model') ?? env.LLM_MODEL
   const baseUrl = str('llm-base-url') ?? env.LLM_BASE_URL
 
+  /**
+   * ── P1-13 (audit): THE ROUTE CONFIG FILE IS NOW READ ON THE MAIN PATH ──────────────────────────
+   *
+   * WHAT WAS WRONG. `route-config.ts` exists for one specific, well-argued reason (its own file
+   * header states it): "An environment variable is fixed at process start… A file can be rewritten
+   * by a running process." That matters for the case this whole harness exists for — the key
+   * expired mid-incident — where the operator can rewrite a file but cannot restart the watcher.
+   *
+   * But the main route was built from env/CLI ONLY. `routeConfigPath` was passed down for the
+   * FALLBACK route and never consulted for the primary one, so a `config.json` holding a working
+   * `baseUrl` / `apiKey` / `model` produced…
+   *
+   *     [harness] 模型 （未配置：只能检测与降级，无法自动修复）
+   *
+   * …and `NO_LLM` on every repair. 153 lines of atomic-write, three-source-precedence, merge-not-
+   * replace code were dead on the path that needed them.
+   *
+   * THE PRECEDENCE, STATED: CLI flag > environment > file. That is the operator's expectation
+   * (the most explicit thing wins) and it keeps every existing env-based setup working untouched.
+   * The file is read every time a decision is made, not cached at startup, because "rewritable
+   * while the process runs" is the entire point of having a file.
+   *
+   * FAILURE MODE: a missing or broken file yields `{}` from `readRouteConfig` (it never throws),
+   * so this degrades to exactly the old behaviour instead of turning "no route configured" into
+   * "your JSON has a trailing comma".
+   */
+  const routeConfigPath = str('route-config') === undefined ? join(homeDir, 'config.json') : resolve(str('route-config')          )
+  const routeFile = readRouteConfig(routeConfigPath)
+  const fileKey = routeFile.apiKey
+  const fileModel = routeFile.model
+  const fileBase = routeFile.baseUrl
+  const effectiveApiKey = apiKey ?? fileKey
+  const effectiveModel = model ?? fileModel
+  const effectiveBaseUrl = baseUrl ?? fileBase
+
   return {
     homeDir,
     sandboxRoots: [...new Set([homeDir, ...extraRoots, ...homeRoots])],
@@ -4740,20 +4852,20 @@ export function resolveConfig(values                               , env        
     failureThreshold: num('failure-threshold', 2),
     maxRepairAttempts: num('max-repair-attempts', 2),
     toolTimeoutMs: num('tool-timeout-ms', DEFAULT_TOOL_TIMEOUT_MS),
-    ...(apiKey === undefined || model === undefined || baseUrl === undefined
+    ...(effectiveApiKey === undefined || effectiveModel === undefined || effectiveBaseUrl === undefined
       ? {}
       : {
           llm: {
-            baseUrl,
-            apiKey,
-            model,
+            baseUrl: effectiveBaseUrl,
+            apiKey: effectiveApiKey,
+            model: effectiveModel,
             ...(str('llm-fallback-model') === undefined && env.LLM_FALLBACK_MODEL === undefined
               ? {}
               : { fallbackModel: str('llm-fallback-model') ?? (env.LLM_FALLBACK_MODEL          ) }),
           },
         }),
     sourceDirs: str('source-dir') === undefined ? [] : [resolve(str('source-dir')          )],
-    routeConfigPath: str('route-config') === undefined ? join(homeDir, 'config.json') : resolve(str('route-config')          ),
+    routeConfigPath,
     quiet: values.quiet === true,
   }
 }

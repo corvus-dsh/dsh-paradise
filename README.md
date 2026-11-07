@@ -397,11 +397,30 @@ node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.
 
 ## 已知边界
 
+> **v2.1.0 更新**：本节第 4、5 条曾经是事实，现在是**过期陈述**，已删除。
+> 下游两个插件早已切换到本层，见下。
+
 1. **路径推导依赖未被承诺的目录布局。** 已标成 `derived:`，失效方式是"读文件失败"，不会伪造成功。
 2. **`RENDERED_CONVERSATION_TYPES` 是实测常量**（住在 `adapters/dsh/policy.ts`），只用于**报告**。
 3. **`inject` 只覆盖 create 时放置**。向已存在会话追加是另一条路径（打开持久句柄写 step-scoped 事件），未接线且如实报告。
-4. **`dsh-observer` 仍走自己的 `observer-inject.ts`**。本轮是"并存"，不是"切换"——旧路径 208 条测试原封不动全绿。
-5. **`graft-slice` 一行未动。**
+4. **沙箱的 fs 白名单不是安全边界。** `within()` 只做词法规范化（`path.resolve`），
+   **不解析符号链接 / Windows 目录联接**——沙箱根内若存在一个指向外部的 junction，
+   白名单可以被绕过。需要真正隔离请用 `node --permission` / 容器 / seccomp。
+   这条一直写在 `sandbox.ts` 的注释里，现在也写进 README，因为它是用户该知道的事。
+5. **裸机模式不含宿主能力诊断。** `assertHostCapabilities` / `REQUIRED_HOST_CAPABILITIES`
+   只从插件入口 `index.js` 导出，`dist/harness.js`（独立 CLI）里没有。也就是说
+   "宿主升级导致插件加载失败"能诊断，但"宿主彻底起不来"时只能靠 CLI 的通用探针。
+
+### 下游插件：彼岸层已经完全接管（不再是"并存"）
+
+| 插件 | 现状 | 证据 |
+|---|---|---|
+| **`dsh-observer`** | ✅ **写路径完全切换**。孵化/点火/回滚必经本层（`paradise-write.ts` → `paradise.session.create` / `paradise.session.trigger` / `paradise.deleteSession`）。`observer-inject.ts` 仅作存档留在磁盘上，**生产代码零调用**；它仍被 import 的只有**只读辅助**（cwd 供体链、错误类型）与 `injectionInternals`（测试用的内存校验器）。 | observer 的 `manifest.json` 红线 `singleWritePath`；`scripts/preflight.mjs` 会**拒绝**任何 `await injectColdSession(` 调用；`test/paradise-bridge.test.mjs` |
+| **`dsh-graft-slice`** | ✅ **完全切换**。切片写入、冷读校验、回滚、点火全走本层适配器。 | graft 的 `src/core/paradise-write.ts`；`test/inject.test.mjs` |
+| **`dsh-memory`** | ⚠️ **部分**：**锁**已改用本层租约（v0.30），**存储**仍是自己的 SKILL.md 文件树（键值存储表达不了用户级可编辑文件树，这是一次刻意的范围裁决）。 | memory 的 `src/lease-bridge.ts`；`test/v030-lease-lock.test.mjs` |
+
+> 曾经的"observer 走自己的 `observer-inject.ts`"与"graft-slice 一行未动"不再是边界，
+> 而是**历史**。把过期陈述留在"已知边界"里，读者会把它当事实——那正是本节要避免的事。
 
 ## 许可
 

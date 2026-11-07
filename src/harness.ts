@@ -37,6 +37,7 @@ import type { HealthProbe, LauncherEvent, RepairAttempt, RepairStrategy } from '
 import { createEmergencyRepair, extractToolSource, isUnresolved } from './emergency-repair.js'
 import { createRawLlm, createRawMessages, createRawSessionAdapter, createRawToolFactory } from './adapters/raw/index.js'
 import { ensureRoot, listWithin, readWithin, writeFileEnsured } from './adapters/raw/sandbox.js'
+import { readRouteConfig } from './adapters/raw/route-config.js'
 import type { LLMAdapter, MessageAdapter, SessionAdapter, ToolFactory } from './protocol/index.js'
 /* ═══════════════════════════════════════════════════════════════════════════════════════════
  * CONFIGURATION
@@ -139,6 +140,41 @@ export function resolveConfig(values: Record<string, string | true>, env: Record
   const model = str('llm-model') ?? env.LLM_MODEL
   const baseUrl = str('llm-base-url') ?? env.LLM_BASE_URL
 
+  /**
+   * ── P1-13 (audit): THE ROUTE CONFIG FILE IS NOW READ ON THE MAIN PATH ──────────────────────────
+   *
+   * WHAT WAS WRONG. `route-config.ts` exists for one specific, well-argued reason (its own file
+   * header states it): "An environment variable is fixed at process start… A file can be rewritten
+   * by a running process." That matters for the case this whole harness exists for — the key
+   * expired mid-incident — where the operator can rewrite a file but cannot restart the watcher.
+   *
+   * But the main route was built from env/CLI ONLY. `routeConfigPath` was passed down for the
+   * FALLBACK route and never consulted for the primary one, so a `config.json` holding a working
+   * `baseUrl` / `apiKey` / `model` produced…
+   *
+   *     [harness] 模型 （未配置：只能检测与降级，无法自动修复）
+   *
+   * …and `NO_LLM` on every repair. 153 lines of atomic-write, three-source-precedence, merge-not-
+   * replace code were dead on the path that needed them.
+   *
+   * THE PRECEDENCE, STATED: CLI flag > environment > file. That is the operator's expectation
+   * (the most explicit thing wins) and it keeps every existing env-based setup working untouched.
+   * The file is read every time a decision is made, not cached at startup, because "rewritable
+   * while the process runs" is the entire point of having a file.
+   *
+   * FAILURE MODE: a missing or broken file yields `{}` from `readRouteConfig` (it never throws),
+   * so this degrades to exactly the old behaviour instead of turning "no route configured" into
+   * "your JSON has a trailing comma".
+   */
+  const routeConfigPath = str('route-config') === undefined ? join(homeDir, 'config.json') : resolve(str('route-config') as string)
+  const routeFile = readRouteConfig(routeConfigPath)
+  const fileKey = routeFile.apiKey
+  const fileModel = routeFile.model
+  const fileBase = routeFile.baseUrl
+  const effectiveApiKey = apiKey ?? fileKey
+  const effectiveModel = model ?? fileModel
+  const effectiveBaseUrl = baseUrl ?? fileBase
+
   return {
     homeDir,
     sandboxRoots: [...new Set([homeDir, ...extraRoots, ...homeRoots])],
@@ -150,20 +186,20 @@ export function resolveConfig(values: Record<string, string | true>, env: Record
     failureThreshold: num('failure-threshold', 2),
     maxRepairAttempts: num('max-repair-attempts', 2),
     toolTimeoutMs: num('tool-timeout-ms', DEFAULT_TOOL_TIMEOUT_MS),
-    ...(apiKey === undefined || model === undefined || baseUrl === undefined
+    ...(effectiveApiKey === undefined || effectiveModel === undefined || effectiveBaseUrl === undefined
       ? {}
       : {
           llm: {
-            baseUrl,
-            apiKey,
-            model,
+            baseUrl: effectiveBaseUrl,
+            apiKey: effectiveApiKey,
+            model: effectiveModel,
             ...(str('llm-fallback-model') === undefined && env.LLM_FALLBACK_MODEL === undefined
               ? {}
               : { fallbackModel: str('llm-fallback-model') ?? (env.LLM_FALLBACK_MODEL as string) }),
           },
         }),
     sourceDirs: str('source-dir') === undefined ? [] : [resolve(str('source-dir') as string)],
-    routeConfigPath: str('route-config') === undefined ? join(homeDir, 'config.json') : resolve(str('route-config') as string),
+    routeConfigPath,
     quiet: values.quiet === true,
   }
 }

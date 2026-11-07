@@ -232,3 +232,98 @@ test('audit A1: a junction pointing OUTSIDE the allowlist is refused, while real
   assert.equal(existsSync(outsideSecret), true, 'the outside secret must still be where the attacker left it')
   rmSync(base, { recursive: true, force: true })
 })
+
+/**
+ * ── AUDIT ROUND 3: THE ONE-LINE ESCAPE IS DEAD, AND `globalThis` NO LONGER LEAKS ────────────────
+ *
+ * THE MEASURED BREACH this pins. The old bootstrap compiled the tool body with
+ * `new Function('api','require',…)`. Shadowing those names worked — `typeof require` really was
+ * `undefined` inside the body — but the REAL `Function` constructor was still reachable through the
+ * global object, and a function built with it declares its own parameters (none of ours):
+ *
+ *     const R = (function(){}).constructor('return require')()
+ *     R('node:fs').readFileSync('<outside the allowlist>')   -> returned the contents
+ *     R('node:fs').writeFileSync('<outside the allowlist>')  -> WROTE the file
+ *     R('node:child_process').execSync                        -> available
+ *
+ * …while `api.readFile` on the SAME path was correctly refused. So the allowlist was never the weak
+ * part — the compiler was, and one line defeated it.
+ *
+ * WHAT CHANGED. The body now runs in a `vm` context created with
+ * `codeGeneration: { strings: false, wasm: false }`, so no code string can be compiled from inside.
+ * Measured after the change: the constructor call throws "Code generation from strings disallowed
+ * for this context", an attempted read/write outside the allowlist fails, and — a bonus the fix did
+ * not promise — `globalThis.process` is now `undefined` too, because the context has its own clean
+ * global object rather than the worker's.
+ *
+ * WHAT IS STILL TRUE, AND WHY THE ASSERTIONS DO NOT OVERCLAIM: `node:vm` is documented as NOT a
+ * security mechanism. These tests assert that the CHEAP escape is gone and the allowlist still works
+ * in both directions. They do not assert that the sandbox is a container, because it is not.
+ */
+test('audit round 3: code generation is DISALLOWED inside the tool, so the constructor escape is dead', async () => {
+  const root = sandboxDir()
+  const outside = join(root, '..', `outside-${Date.now().toString(36)}`)
+  mkdirSync(outside, { recursive: true })
+  const secret = join(outside, 'secret.txt')
+  const pwned = join(outside, 'pwned.txt')
+  writeFileSync(secret, 'HOST-SECRET', 'utf8')
+
+  const factory = sandboxedFactory([root], 8000)
+  const define = async (name, body) => {
+    const defined = await factory.define({
+      name,
+      source: `({ execute: async (args) => { ${body} } })`,
+    })
+    assert.equal(defined.ok, true, `${name}: ${defined.error?.message ?? ''}`)
+    return factory.execute(name, { path: secret, target: pwned })
+  }
+
+  // 1. The global object no longer even carries the host's `process` (stronger than before).
+  const directProcess = await define('r3-direct-process', 'return typeof process')
+  assert.equal(directProcess.value, 'undefined', '`process` is not a parameter, and must not leak in')
+
+  const viaGlobal = await define('r3-global-process', 'return typeof (globalThis && globalThis.process)')
+  assert.equal(
+    viaGlobal.value,
+    'undefined',
+    'globalThis must not carry the host process — the vm context has its own clean global',
+  )
+
+  // 2. THE ESCAPE ITSELF MUST THROW, not merely fail to be useful.
+  const ctor = await define(
+    'r3-ctor',
+    "const R = (function(){}).constructor('return require')(); return typeof R",
+  )
+  assert.equal(ctor.isError, true, 'building a function from a string must be REFUSED')
+  assert.match(
+    String(ctor.error?.message ?? ''),
+    /code generation|disallowed/iu,
+    'and the refusal must be the code-generation block, not an unrelated error',
+  )
+
+  // 3. Reading outside the allowlist through the (now impossible) recovery path must not work.
+  const readOutside = await define(
+    'r3-read-outside',
+    "const R = (function(){}).constructor('return require')(); return R('node:fs').readFileSync(args.path, 'utf8')",
+  )
+  assert.equal(readOutside.isError, true, 'the recovered-require path must not read outside')
+
+  // 4. Writing outside must not work either — the assertion that actually matters.
+  const writeOutside = await define(
+    'r3-write-outside',
+    "const R = (function(){}).constructor('return require')(); R('node:fs').writeFileSync(args.target, 'PWNED'); return 'wrote'",
+  )
+  assert.equal(writeOutside.isError, true, 'the recovered-require path must not write outside')
+  assert.equal(existsSync(pwned), false, 'no file may appear outside the allowlist')
+
+  // 5. THE CONTROLS: the allowlist still refuses `api.*` outside, and still allows inside.
+  const apiOutside = await define('r3-api-outside', 'return api.readFile(args.path)')
+  assert.equal(apiOutside.isError, true, 'api.* outside the allowlist must still be denied')
+  assert.equal(apiOutside.error?.code, 'SANDBOX_DENIED')
+
+  const apiInside = await define('r3-api-inside', 'return "inside-ok"')
+  assert.equal(apiInside.isError, false, 'the sandbox must still run ordinary tools')
+
+  rmSync(outside, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true })
+})

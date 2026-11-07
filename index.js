@@ -7489,10 +7489,42 @@ function createRawMessages(options                    = {})                 {
  *   ✔ a HARD KILL. `worker.terminate()` ends a synchronous infinite loop — which `Promise.race` cannot.
  *   ✔ a RESTRICTED API SURFACE. The tool never sees `fs`; it sees four functions that check an allowlist.
  *   ✔ `require`, `process`, `module`, `__dirname` SHADOWED to undefined as parameters.
+ *   ✔ THE `Function` CONSTRUCTOR IS DISABLED INSIDE THE TOOL (v0.9.0-beta.1). Code strings cannot be
+ *     compiled from inside the sandbox, so `globalThis` cannot be walked back to `require`.
  *
- *   ✘ NOT A SECURITY BOUNDARY against a determined attacker. `globalThis` remains reachable through the
- *     `Function` constructor, and from there the host's own globals. An in-process VM cannot fix that;
- *     only a real permission boundary can.
+ *   ✘ STILL NOT A SECURITY BOUNDARY. This is now a real barrier rather than a formality, but `node:vm`
+ *     is documented as NOT a security mechanism, and every escape that exists in V8 is one this
+ *     cannot stop. Treat it as a HIGH BARRIER against accidents and casual payloads, not as a
+ *     container. For actual isolation use `node --permission`, a container, or seccomp.
+ *
+ * ── WHY THE `Function` CONSTRUCTOR IS THE THING THAT HAD TO GO (measured, v0.9.0-beta.1) ─────────
+ *
+ * Parameter shadowing worked exactly as designed — `typeof process` and `typeof require` were both
+ * `undefined` inside the tool body. But the sandbox compiled the body with
+ *
+ *     new Function('api', 'require', ...)
+ *
+ * which means the tool body could reach the REAL `Function` constructor through the global object
+ * and mint a function with NO shadowed parameters. Measured against a temp allowlist, this worked:
+ *
+ *     const R = (function(){}).constructor('return require')()
+ *     R('node:fs').readFileSync('<outside the allowlist>')   -> returned the file's contents
+ *     R('node:fs').writeFileSync('<outside the allowlist>')  -> WROTE it
+ *     R('node:child_process').execSync                        -> available
+ *
+ * Meanwhile the SAME path through `api.readFile` was correctly refused. So the allowlist was doing
+ * its job and the escape bypassed it entirely — one line, no exploit, no CVE. That contrast is what
+ * identified the fix: the whitelist was never the weak part, the compiler was.
+ *
+ * THE FIX, AND ITS HONEST LIMIT. The body now runs inside a `vm` context created with
+ * `contextCodeGeneration: { strings: false, wasm: false }` — `eval` and `new Function` throw, so no
+ * code string can be compiled from within. The tool still receives `api` and still cannot see `fs`
+ * except through the allowlist.
+ *
+ * It does NOT follow that the sandbox is now safe. `node:vm` is explicitly not a security boundary
+ * (Node's own documentation says so), and a V8 escape would defeat it. What changed is that the
+ * cheapest possible bypass is gone, and the documentation below no longer implies the whitelist is
+ * a boundary when it is only an API-surface guard.
  *
  * WHY THE HONESTY MATTERS MORE THAN THE FEATURE
  *
@@ -7514,15 +7546,44 @@ function createRawMessages(options                    = {})                 {
                                 
                                                       
                             
-                                                                                  
+     
+                                                                              
+    
+                                                                                                      
+                                                                                                    
+                                                            
+     
                             
                                                           
                                 
      
+                                                                                                   
+    
+                                                                                                      
+                                                                                      
+                                                                                                 
+                                                                                                      
+                                                                               
+    
+                                                                                                   
+                                                                                                  
+                            
+    
+                                                                                            
+                         
+                                                                                                 
+                                                                          
+                                                                      
+                                                                                            
+     
+                                       
+     
                                                                   
     
-                                                                                                        
-                                                         
+                                                                                                    
+                                                                                                     
+                                                                                               
+                         
      
                                
  
@@ -7532,6 +7593,7 @@ const SANDBOX_CAPABILITIES                      = Object.freeze({
   hardTimeout: true,
   fsAllowlist: true,
   globalsShadowed: true,
+  codeGenerationDisabled: true,
   escapesGlobals: true,
 })
 
@@ -7690,16 +7752,68 @@ const api = {
 
 ;(async () => {
   try {
+    const vm = require('node:vm')
     /**
-     * THE DANGEROUS GLOBALS ARE PARAMETERS, so the tool body sees them as undefined.
-     * A parameter shadows a global for the whole function body — including a nested function that
-     * tries to read it. This is the one mechanism that actually works in-process.
+     * ── v0.9.0-beta.1: CODE GENERATION IS OFF, SO THE CONSTRUCTOR ESCAPE IS GONE ─────────────────
+     *
+     * The previous bootstrap compiled the tool body with \`new Function('api','require',…)\`. Shadowing
+     * the DANGEROUS NAMES as parameters works — \`typeof require\` really was \`undefined\` inside the
+     * body — but it does not remove the \`Function\` CONSTRUCTOR from the global object, and a function
+     * built with that constructor declares its own parameters (i.e. none of ours):
+     *
+     *     (function(){}).constructor('return require')()
+     *
+     * Measured against a temp allowlist, the result of that expression read AND WROTE files outside
+     * the allowlist, via require('node:fs'), while the identical access through api.readFile was
+     * refused. One line, no exploit: the allowlist was fine, the compiler was the hole.
+     *
+     * \`contextCodeGeneration: { strings: false, wasm: false }\` makes \`eval\` and \`new Function\` THROW
+     * inside the context, so no code string can be compiled from within and there is no constructor to
+     * reach. The body is compiled HERE, in the worker, once — it is not the tool's privilege to
+     * compile anything else.
+     *
+     * WHAT THIS IS NOT: node:vm is documented as NOT a security mechanism. This removes the cheapest
+     * bypass; it does not make the sandbox a container. The module header says so, and the caller is
+     * still told to use --permission or a container for real isolation.
      */
-    const factory = new Function(
-      'api', 'require', 'process', 'module', 'exports', '__dirname', '__filename',
-      '"use strict"; return (' + workerData.source + ');',
+    const context = vm.createContext(
+      {
+        api,
+        require: undefined,
+        process: undefined,
+        module: undefined,
+        exports: undefined,
+        __dirname: undefined,
+        __filename: undefined,
+        console: undefined,
+        setTimeout: undefined,
+        setInterval: undefined,
+      },
+      {
+        name: 'dsh-paradise-sandbox',
+        codeGeneration: { strings: false, wasm: false },
+      },
     )
-    const body = factory(api, undefined, undefined, undefined, undefined, undefined, undefined)
+    /**
+     * THE TOOL SOURCE IS COMPILED OUTSIDE THE LOCKED CONTEXT, then evaluated inside it.
+     *
+     * \`vm.Script\` is created in THIS worker's context (where code generation is still allowed) and
+     * run inside the locked one. That asymmetry is the point: the harness may compile the tool; the
+     * tool may not compile anything.
+     *
+     * NOTE THE STRING CONCATENATION, NOT A TEMPLATE LITERAL: this whole worker bootstrap is itself a
+     * template literal, and a nested backtick would terminate it — the build fails with a TypeScript
+     * syntax error and no line number, which is how this was found the first time.
+     */
+    const wrapped = '"use strict"; (' + String(workerData.source) + ');'
+    const script = new vm.Script(wrapped, { filename: 'sandbox-tool.js' })
+    /**
+     * NO timeout HERE, AND THAT IS DELIBERATE. vm's own timeout cannot interrupt a synchronous
+     * loop reliably (it only fires at safepoints), which is exactly why the outer worker.terminate()
+     * exists. Passing a value here would suggest a second, weaker watchdog is in play; passing 0 is
+     * not even legal (it throws ERR_OUT_OF_RANGE, which is how this was found).
+     */
+    const body = script.runInContext(context)
     if (body === null || typeof body !== 'object' || typeof body.execute !== 'function') {
       parentPort.postMessage({ ok: false, error: { code: 'TOOL_SHAPE_INVALID', message: '源码必须求值成 { execute } 对象' } })
       return

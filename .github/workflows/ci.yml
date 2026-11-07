@@ -52,13 +52,36 @@ jobs:
         # different and worse: `.gitignore` excluded the whole directory, so the two programs were
         # NEVER COMMITTED and CI died at `node --check` with `Cannot find module`. The `.gitignore`
         # now whitelists them explicitly; this step names only what the build regenerates.
+        #
+        # WHY `git diff --exit-code` AND NOT `git status --porcelain`
+        #
+        # `git status` answers "does the file differ from what the stat cache remembers", and with
+        # `core.autocrlf=true` (the default on a Windows clone) it can answer YES for a file whose
+        # CONTENT is byte-identical to the committed blob — git wants to convert the worktree file to
+        # CRLF "the next time it touches it", and reports that pending conversion as a modification.
+        #
+        # Measured on a fresh clone of dsh-observer (same build-then-diff gate): after `npm run
+        # build`, `git hash-object index.js` equals the committed blob exactly and `git diff
+        # --exit-code` exits 0, while `git status --porcelain` still prints ` M index.js`. A gate
+        # built on `status` therefore fails a perfectly current artifact on every Windows machine.
+        #
+        # `git diff --exit-code` compares content after the repo's configured filters, which is the
+        # same normalization `git status` applies — so it agrees with `status` on real edits but not
+        # on pending-EOL noise. That is exactly the discrimination this gate needs.
+        #
+        # ⚠️ DO NOT "fix" this by pinning `core.autocrlf=false`. That disables the normalization
+        # instead of relying on it, and on a worktree with CRLF bytes it turns pure EOL churn into a
+        # whole-file diff. Measured on dsh-memory: `lib/index.js` has 1664 CR bytes in the worktree,
+        # plain `git diff` exits 0, and `git -c core.autocrlf=false diff` reports 7 files changed /
+        # 7674 insertions / 7674 deletions of NOTHING.
         run: |
           GENERATED="index.js dist/harness.js"
-          if [ -n "$(git status --porcelain -- $GENERATED)" ]; then
+          if ! git diff --exit-code -- $GENERATED; then
             echo "::error::The build changed generated artifacts. Run 'npm run build:all' and commit the result."
             git --no-pager diff --stat -- $GENERATED
             exit 1
           fi
+          echo "ok: generated artifacts match what is committed"
 
       - name: Every entry point the package exposes must exist and parse
         # The documented `bin` targets and `dist/harness.js` are what a user actually runs, so a

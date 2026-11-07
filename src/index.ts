@@ -101,7 +101,7 @@ import type { NetworkClientOptions, NetworkServer, NetworkServerOptions } from '
 const verifySessionDeletion = verifyDeletion
 
 /** Version probe, printed at import time so the host log proves which copy is live. */
-export const VERSION = '2.1.0'
+export const VERSION = '2.2.0'
 /**
  * v2.1.0: the npm name is scoped. The registry rejects the bare name, and a host log that prints a
  * name the registry does not know makes "which copy is live" unanswerable — so this follows it.

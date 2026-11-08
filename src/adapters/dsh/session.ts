@@ -208,10 +208,18 @@ export function createDshSessionAdapter(ctx: any): SessionAdapter {
            * a marker the caller never used (changing the instruction text it sends), and make the
            * idempotence check look for a string that will never appear — so every retry would
            * re-prompt a session that is already awake.
+           *
+           * A STRING OR A LIST IS FORWARDED AS GIVEN. The first version of this gate accepted only
+           * strings (`typeof marker === 'string'`), which silently DROPPED a caller that passes its
+           * marker history as an array — the caller's own prompt then got the neutral default
+           * prepended instead, producing `[plugin 点火] [dsh-observer 点火] …`. The type widening is
+           * the whole fix; `triggerSession` is what decides stamp-vs-read semantics.
            */
           ...(typeof trigger.marker === 'string' && trigger.marker.trim().length > 0
             ? { marker: trigger.marker.trim() }
-            : {}),
+            : Array.isArray(trigger.marker) && trigger.marker.length > 0
+              ? { marker: trigger.marker }
+              : {}),
           /**
            * THE CALLER OWNS "ESCALATE OR REFUSE". A caller that promised one mode and reports a
            * refusal as failure passes `false`; the default keeps the older, more forgiving behaviour.

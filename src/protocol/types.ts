@@ -101,8 +101,14 @@ export interface TurnTrigger {
    * already send this?". Two callers with different prefixes cannot both be answered by one hard-coded
    * string — the wrong one makes a retry look like a first attempt, and the target is prompted twice.
    * It is opaque caller text, not a host vocabulary word, so it belongs in the protocol.
+   *
+   * A STRING OR A LIST. The list form exists for a caller that has RENAMED its marker: entry 0 is the
+   * current marker (what a new prompt is stamped with), and the remaining entries are historical
+   * aliases honoured only by the idempotence check. Without the list, a rename makes every session
+   * prompted before it look never-ignited, and each of them is prompted again — the precise failure
+   * this field exists to prevent. A single string is exactly the one-entry list.
    */
-  readonly marker?: string
+  readonly marker?: string | readonly string[]
   /**
    * Try the OTHER mode when the requested one is refused. Defaults to ON.
    *

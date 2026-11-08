@@ -64,21 +64,64 @@ function isPluginAuthored(sourceKind         )          {
 }
 
 /**
- * The prefix every ignition prompt carries.
+ * The DEFAULT prefix an ignition prompt carries, when the caller names no marker of its own.
  *
- * It is how a RETRY recognises its own previous admission, and how a later reader knows a session was
- * started by a plugin rather than by a human. Deliberately the observer's historical marker: an
- * existing session already carries prompts with this prefix, and changing it would make every prior
- * ignition invisible to the idempotence check — i.e. re-triggering sessions that are already running.
+ * ── P0 (audit 2026-11-08): THIS USED TO NAME AN UPPER LAYER ────────────────────────────────────
+ *
+ * It was `'[dsh-observer 点火]'`. That is a LAYER INVERSION: L1 (this host adapter) was encoding
+ * the identity of a specific L4 plugin. Two consequences, and the second is the one that bites:
+ *
+ *   1. The dependency runs backwards. Nothing in this layer imports or knows about observer; a
+ *      constant with its name is the only thing suggesting otherwise, and it is wrong.
+ *   2. It was ALSO the idempotence key. Renaming the observer's marker would silently stop every
+ *      prior ignition from being recognised — and a missed recognition means RE-TRIGGERING a
+ *      session that is already running, which is not a cosmetic failure.
+ *
+ * So the marker is now a CALLER concern:
+ *
+ *   - this constant is deliberately NEUTRAL: it says "a plugin started this", naming none;
+ *   - `isPromptText` takes `string | string[]`, and each caller passes the markers it has actually
+ *     used over time (its current one first, then the historical aliases it must keep honouring).
+ *
+ * That is what keeps the old sessions idempotent WITHOUT this layer knowing whose they are: the
+ * knowledge of "observer used to stamp `[dsh-observer 点火]`" lives in observer, where it belongs.
  */
-const PROMPT_MARKER = '[dsh-observer 点火]'
+const DEFAULT_PROMPT_MARKER = '[plugin 点火]'
 
 /** How long the host is given to admit a prompt before the attempt is abandoned. */
 const TRIGGER_TIMEOUT_MS = 20_000
 
-/** Is this text our own ignition, rather than something a human typed? */
-function isPromptText(text         , marker         = PROMPT_MARKER)          {
-  return typeof text === 'string' && text.trimStart().startsWith(marker)
+/**
+ * Is this text one of OUR ignitions, rather than something a human typed?
+ *
+ * `marker` accepts a LIST because a caller's stamp changes over time and old sessions must keep
+ * being recognised. The first entry is the current marker (also used when composing new prompts);
+ * the rest are historical aliases that only ever matter on the READ side.
+ */
+function isPromptText(text         , marker                             = DEFAULT_PROMPT_MARKER)          {
+  if (typeof text !== 'string') return false
+  const trimmed = text.trimStart()
+  const markers = typeof marker === 'string' ? [marker] : marker
+  for (const candidate of markers) {
+    if (typeof candidate !== 'string' || candidate.length === 0) continue
+    if (trimmed.startsWith(candidate)) return true
+  }
+  return false
+}
+
+/**
+ * The marker to STAMP with, from a caller's list: the current one, or the neutral default.
+ *
+ * Separate from `isPromptText` on purpose. Reading accepts a list; writing must choose exactly one,
+ * and choosing the wrong member would stamp a historical alias onto a new prompt.
+ */
+function markerToStamp(marker                                        )         {
+  if (typeof marker === 'string' && marker.trim().length > 0) return marker.trim()
+  if (Array.isArray(marker)) {
+    const first = marker.find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0)
+    if (typeof first === 'string') return first.trim()
+  }
+  return DEFAULT_PROMPT_MARKER
 }
 
 /**
@@ -974,8 +1017,14 @@ function publishNotImplemented()        {
                                                                                                        
                                                                                                       
                                                                                          
+    
+                                                                                                      
+                                                                                                 
+                                                                                                   
+                                                                                                    
+                                                                                 
      
-                          
+                                              
      
                                                                           
     
@@ -3808,14 +3857,15 @@ async function createSession(ctx     , options               )                  
                                               
     
                                                                                                     
-                                                                                                    
-                                                                                                       
-                                                            
+                                                                                                     
+                                                                                                   
+                                                                                               
+                                                      
     
-                                                                                                      
-                                                                              
+                                                                                                       
+                                                                          
      
-                 
+                                     
      
                                                                   
     
@@ -3873,7 +3923,7 @@ const SESSION_MISSING = /not[- ]?found|no such session|SESSION_NOT_FOUND|未知�
 async function alreadyTriggered(
   readSession                                            ,
   sessionId        ,
-  marker         = PROMPT_MARKER,
+  marker                             = DEFAULT_PROMPT_MARKER,
 )                                                                   {
   if (typeof readSession !== 'function') return { known: false, triggered: false, reason: '无法读取目标日志' }
   let snapshot     
@@ -3912,11 +3962,37 @@ async function triggerSession(
   },
 )                          {
   const warnings           = []
-  const marker = typeof options.marker === 'string' && options.marker.trim().length > 0 ? options.marker.trim() : PROMPT_MARKER
+  /**
+   * TWO VIEWS OF THE SAME CALLER CONFIGURATION, and they are different on purpose:
+   *
+   *   `markerForRead`  a LIST — the idempotence check accepts the current marker and every
+   *                    historical alias, so an old session is still recognised;
+   *   `marker`         exactly ONE — what gets stamped onto a new prompt. Stamping a historical
+   *                    alias would write the past into the present.
+   */
+  const markerForRead = options.marker
+  const marker = markerToStamp(options.marker)
   const prompt = (() => {
     const custom = typeof options.text === 'string' ? options.text.trim() : ''
     if (custom.length === 0) return marker
-    return custom.startsWith(marker) ? custom : `${marker} ${custom}`
+    /**
+     * DO NOT DOUBLE-PREFIX A PROMPT THE CALLER ALREADY STAMPED.
+     *
+     * Checking only `startsWith(marker)` was correct while the default marker happened to BE the
+     * caller's marker. It is not any more: the default is now the neutral `[plugin 点火]`, while a
+     * caller composes its text with its OWN marker already in front. The first version of this fix
+     * produced
+     *
+     *     [plugin 点火] [dsh-observer 点火] 你刚刚被孵化出来…
+     *
+     * — two markers, the neutral one in FRONT, which would then be the text a reader sees first and
+     * the string the NEXT idempotence check compares against. Caught by the observer's own property
+     * test ("the marker prefixes every ignition prompt"), which is exactly what it is there for.
+     *
+     * So: if the text already carries ANY of this caller's markers (current or alias), leave it
+     * alone. Only an unstamped custom text gets the current marker prepended.
+     */
+    return isPromptText(custom, markerForRead ?? marker) ? custom : `${marker} ${custom}`
   })()
 
   if (options.skipIdempotence !== true) {
@@ -3925,7 +4001,15 @@ async function triggerSession(
       typeof query === 'object' && query !== null && typeof (query       ).readSession === 'function'
         ? (id        ) => (query       ).readSession(id)
         : undefined
-    const prior = await alreadyTriggered(readSession, sessionId, marker)
+    /**
+     * THE IDEMPOTENCE CHECK GETS THE LIST, NOT THE SINGLE MARKER.
+     *
+     * Passing `marker` here was the subtle half of the bug: the stamp is one string, but the READ
+     * must accept every alias the caller has ever used. With the single value, a caller that renamed
+     * its marker would fail to recognise its own pre-rename prompts and trigger an already-awake
+     * session again.
+     */
+    const prior = await alreadyTriggered(readSession, sessionId, markerForRead)
     if (prior.triggered) {
       return {
         ok: true,
@@ -4226,10 +4310,18 @@ function createDshSessionAdapter(ctx     )                 {
            * a marker the caller never used (changing the instruction text it sends), and make the
            * idempotence check look for a string that will never appear — so every retry would
            * re-prompt a session that is already awake.
+           *
+           * A STRING OR A LIST IS FORWARDED AS GIVEN. The first version of this gate accepted only
+           * strings (`typeof marker === 'string'`), which silently DROPPED a caller that passes its
+           * marker history as an array — the caller's own prompt then got the neutral default
+           * prepended instead, producing `[plugin 点火] [dsh-observer 点火] …`. The type widening is
+           * the whole fix; `triggerSession` is what decides stamp-vs-read semantics.
            */
           ...(typeof trigger.marker === 'string' && trigger.marker.trim().length > 0
             ? { marker: trigger.marker.trim() }
-            : {}),
+            : Array.isArray(trigger.marker) && trigger.marker.length > 0
+              ? { marker: trigger.marker }
+              : {}),
           /**
            * THE CALLER OWNS "ESCALATE OR REFUSE". A caller that promised one mode and reports a
            * refusal as failure passes `false`; the default keeps the older, more forgiving behaviour.
@@ -13735,6 +13827,12 @@ function createHarnessServer(options                      ) {
  * says which parts are still coupled.
  */
 
+/**
+ * THE MARKER CONTRACT, exported from the entry point because it is the seam a CALLER of this layer
+ * depends on: an upper layer passes its own marker(s) in, and the idempotence check honours every
+ * alias. Exported here (bare, not `from`) for the same bundling reason as everything else.
+ */
+export { DEFAULT_PROMPT_MARKER, isPromptText, markerToStamp }
 /**
  * THE TRUST SCALE is a value a CALLER compares against (`TRUST_ORDER[a] > TRUST_ORDER[b]`), which a type
  * cannot express. Re-exported here so a deployment does not have to reach into `protocol/` for it.

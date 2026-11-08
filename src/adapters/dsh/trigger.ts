@@ -25,7 +25,7 @@
  * arrives at the start of the next turn is still worth more than one that never arrives.
  */
 
-import { PROMPT_MARKER, TRIGGER_TIMEOUT_MS, isPromptText } from './policy.js'
+import { DEFAULT_PROMPT_MARKER, TRIGGER_TIMEOUT_MS, isPromptText, markerToStamp } from './policy.js'
 import { service } from './services.js'
 
 /** What one trigger attempt did, with evidence. */
@@ -53,15 +53,16 @@ export interface TriggerOptions {
   /**
    * WHICH MARKER MARKS THIS CALLER'S PROMPTS.
    *
-   * The default is this host's historically shared marker, which is what lets an EXISTING session's
-   * log (written before this layer existed) still be recognised as already triggered. A caller with
-   * its own marker — a different plugin, with prompts already in the field — passes its own text here,
-   * and both the idempotence check and the stamping use it.
+   * A STRING or a LIST. The list form exists because a caller's stamp changes over time and the old
+   * sessions keep carrying the old text: entry 0 is the CURRENT marker (what gets stamped onto a new
+   * prompt), any further entries are historical aliases honoured ONLY by the read-side idempotence
+   * check. A caller that renamed its marker and passed only the new one would re-trigger every
+   * session it had already ignited before the rename.
    *
-   * Without this the idempotence check would look for one plugin's marker in another plugin's log and
-   * conclude "never triggered", re-prompting a session that is already awake.
+   * When omitted, the neutral `DEFAULT_PROMPT_MARKER` is used — deliberately naming no plugin, so this
+   * host adapter never encodes an upper layer's identity (see policy.ts).
    */
-  marker?: string
+  marker?: string | readonly string[]
   /**
    * Try the OTHER mode when the first is refused. Default `true`.
    *
@@ -119,7 +120,7 @@ const SESSION_MISSING = /not[- ]?found|no such session|SESSION_NOT_FOUND|未知�
 export async function alreadyTriggered(
   readSession: ((id: string) => Promise<any>) | undefined,
   sessionId: string,
-  marker: string = PROMPT_MARKER,
+  marker: string | readonly string[] = DEFAULT_PROMPT_MARKER,
 ): Promise<{ known: boolean; triggered: boolean; reason?: string }> {
   if (typeof readSession !== 'function') return { known: false, triggered: false, reason: '无法读取目标日志' }
   let snapshot: any
@@ -158,11 +159,37 @@ export async function triggerSession(
   },
 ): Promise<TriggerReceipt> {
   const warnings: string[] = []
-  const marker = typeof options.marker === 'string' && options.marker.trim().length > 0 ? options.marker.trim() : PROMPT_MARKER
+  /**
+   * TWO VIEWS OF THE SAME CALLER CONFIGURATION, and they are different on purpose:
+   *
+   *   `markerForRead`  a LIST — the idempotence check accepts the current marker and every
+   *                    historical alias, so an old session is still recognised;
+   *   `marker`         exactly ONE — what gets stamped onto a new prompt. Stamping a historical
+   *                    alias would write the past into the present.
+   */
+  const markerForRead = options.marker
+  const marker = markerToStamp(options.marker)
   const prompt = (() => {
     const custom = typeof options.text === 'string' ? options.text.trim() : ''
     if (custom.length === 0) return marker
-    return custom.startsWith(marker) ? custom : `${marker} ${custom}`
+    /**
+     * DO NOT DOUBLE-PREFIX A PROMPT THE CALLER ALREADY STAMPED.
+     *
+     * Checking only `startsWith(marker)` was correct while the default marker happened to BE the
+     * caller's marker. It is not any more: the default is now the neutral `[plugin 点火]`, while a
+     * caller composes its text with its OWN marker already in front. The first version of this fix
+     * produced
+     *
+     *     [plugin 点火] [dsh-observer 点火] 你刚刚被孵化出来…
+     *
+     * — two markers, the neutral one in FRONT, which would then be the text a reader sees first and
+     * the string the NEXT idempotence check compares against. Caught by the observer's own property
+     * test ("the marker prefixes every ignition prompt"), which is exactly what it is there for.
+     *
+     * So: if the text already carries ANY of this caller's markers (current or alias), leave it
+     * alone. Only an unstamped custom text gets the current marker prepended.
+     */
+    return isPromptText(custom, markerForRead ?? marker) ? custom : `${marker} ${custom}`
   })()
 
   if (options.skipIdempotence !== true) {
@@ -171,7 +198,15 @@ export async function triggerSession(
       typeof query === 'object' && query !== null && typeof (query as any).readSession === 'function'
         ? (id: string) => (query as any).readSession(id)
         : undefined
-    const prior = await alreadyTriggered(readSession, sessionId, marker)
+    /**
+     * THE IDEMPOTENCE CHECK GETS THE LIST, NOT THE SINGLE MARKER.
+     *
+     * Passing `marker` here was the subtle half of the bug: the stamp is one string, but the READ
+     * must accept every alias the caller has ever used. With the single value, a caller that renamed
+     * its marker would fail to recognise its own pre-rename prompts and trigger an already-awake
+     * session again.
+     */
+    const prior = await alreadyTriggered(readSession, sessionId, markerForRead)
     if (prior.triggered) {
       return {
         ok: true,

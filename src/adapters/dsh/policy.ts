@@ -54,21 +54,64 @@ export function isPluginAuthored(sourceKind: unknown): boolean {
 }
 
 /**
- * The prefix every ignition prompt carries.
+ * The DEFAULT prefix an ignition prompt carries, when the caller names no marker of its own.
  *
- * It is how a RETRY recognises its own previous admission, and how a later reader knows a session was
- * started by a plugin rather than by a human. Deliberately the observer's historical marker: an
- * existing session already carries prompts with this prefix, and changing it would make every prior
- * ignition invisible to the idempotence check — i.e. re-triggering sessions that are already running.
+ * ── P0 (audit 2026-11-08): THIS USED TO NAME AN UPPER LAYER ────────────────────────────────────
+ *
+ * It was `'[dsh-observer 点火]'`. That is a LAYER INVERSION: L1 (this host adapter) was encoding
+ * the identity of a specific L4 plugin. Two consequences, and the second is the one that bites:
+ *
+ *   1. The dependency runs backwards. Nothing in this layer imports or knows about observer; a
+ *      constant with its name is the only thing suggesting otherwise, and it is wrong.
+ *   2. It was ALSO the idempotence key. Renaming the observer's marker would silently stop every
+ *      prior ignition from being recognised — and a missed recognition means RE-TRIGGERING a
+ *      session that is already running, which is not a cosmetic failure.
+ *
+ * So the marker is now a CALLER concern:
+ *
+ *   - this constant is deliberately NEUTRAL: it says "a plugin started this", naming none;
+ *   - `isPromptText` takes `string | string[]`, and each caller passes the markers it has actually
+ *     used over time (its current one first, then the historical aliases it must keep honouring).
+ *
+ * That is what keeps the old sessions idempotent WITHOUT this layer knowing whose they are: the
+ * knowledge of "observer used to stamp `[dsh-observer 点火]`" lives in observer, where it belongs.
  */
-export const PROMPT_MARKER = '[dsh-observer 点火]'
+export const DEFAULT_PROMPT_MARKER = '[plugin 点火]'
 
 /** How long the host is given to admit a prompt before the attempt is abandoned. */
 export const TRIGGER_TIMEOUT_MS = 20_000
 
-/** Is this text our own ignition, rather than something a human typed? */
-export function isPromptText(text: unknown, marker: string = PROMPT_MARKER): boolean {
-  return typeof text === 'string' && text.trimStart().startsWith(marker)
+/**
+ * Is this text one of OUR ignitions, rather than something a human typed?
+ *
+ * `marker` accepts a LIST because a caller's stamp changes over time and old sessions must keep
+ * being recognised. The first entry is the current marker (also used when composing new prompts);
+ * the rest are historical aliases that only ever matter on the READ side.
+ */
+export function isPromptText(text: unknown, marker: string | readonly string[] = DEFAULT_PROMPT_MARKER): boolean {
+  if (typeof text !== 'string') return false
+  const trimmed = text.trimStart()
+  const markers = typeof marker === 'string' ? [marker] : marker
+  for (const candidate of markers) {
+    if (typeof candidate !== 'string' || candidate.length === 0) continue
+    if (trimmed.startsWith(candidate)) return true
+  }
+  return false
+}
+
+/**
+ * The marker to STAMP with, from a caller's list: the current one, or the neutral default.
+ *
+ * Separate from `isPromptText` on purpose. Reading accepts a list; writing must choose exactly one,
+ * and choosing the wrong member would stamp a historical alias onto a new prompt.
+ */
+export function markerToStamp(marker: string | readonly string[] | undefined): string {
+  if (typeof marker === 'string' && marker.trim().length > 0) return marker.trim()
+  if (Array.isArray(marker)) {
+    const first = marker.find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0)
+    if (typeof first === 'string') return first.trim()
+  }
+  return DEFAULT_PROMPT_MARKER
 }
 
 /**

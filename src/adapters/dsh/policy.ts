@@ -115,6 +115,34 @@ export function markerToStamp(marker: string | readonly string[] | undefined): s
 }
 
 /**
+ * THE `api-session/added` WIRE SHAPE — the two fields a host can actually resolve a payload by.
+ *
+ * ── P1-3 (audit 2026-11-08) WHY THIS IS A GUARD AND NOT A COMMENT ──────────────────────────────
+ *
+ * This layer emits `api-session/added` ITSELF when it writes a cold session, because the host emits
+ * that event only for sessions published into the live store, and a published target cannot be
+ * resumed — publishing would make it visible and unopenable. The event reaches peers through
+ * `dsh-api-remotes`, which keys it by `resources: { session: summary => summary.sessionId }`, and
+ * the client applies it through `handleSessionAdded` -> `mergeSummary`.
+ *
+ * The host's `assertJsonArgs` checks only that the payload is JSON-serialisable. It does NOT check
+ * that `sessionId` is a string. So a payload carrying a missing or non-string id throws NOWHERE: it
+ * arrives at the peer's access-control step as `undefined`, where at best the summary is dropped and
+ * at worst the key is used for a lookup that cannot succeed. That is a silent, remote-only failure —
+ * exactly the class this file exists to name rather than assume.
+ *
+ * IT REJECTS NOTHING THAT IS EMITTED TODAY: every current caller derives `sessionId` from a
+ * non-empty string and `updatedAt` from a finite number (or from `Date.now()`). The guard is for the
+ * NEXT caller, so a payload no host can resolve can never leave this layer unnoticed.
+ */
+export function assertSessionSummary(payload: unknown): payload is { sessionId: string; updatedAt: number } {
+  if (typeof payload !== 'object' || payload === null) return false
+  const summary = payload as { sessionId?: unknown; updatedAt?: unknown }
+  if (typeof summary.sessionId !== 'string' || summary.sessionId.length === 0) return false
+  return typeof summary.updatedAt === 'number' && Number.isFinite(summary.updatedAt)
+}
+
+/**
  * The system head a freshly written session opens with.
  *
  * WHY IT MUST EXIST AT ALL: this host replaces surface node 0 with its own rendered prompt on the

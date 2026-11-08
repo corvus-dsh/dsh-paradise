@@ -125,6 +125,34 @@ function markerToStamp(marker                                        )         {
 }
 
 /**
+ * THE `api-session/added` WIRE SHAPE — the two fields a host can actually resolve a payload by.
+ *
+ * ── P1-3 (audit 2026-11-08) WHY THIS IS A GUARD AND NOT A COMMENT ──────────────────────────────
+ *
+ * This layer emits `api-session/added` ITSELF when it writes a cold session, because the host emits
+ * that event only for sessions published into the live store, and a published target cannot be
+ * resumed — publishing would make it visible and unopenable. The event reaches peers through
+ * `dsh-api-remotes`, which keys it by `resources: { session: summary => summary.sessionId }`, and
+ * the client applies it through `handleSessionAdded` -> `mergeSummary`.
+ *
+ * The host's `assertJsonArgs` checks only that the payload is JSON-serialisable. It does NOT check
+ * that `sessionId` is a string. So a payload carrying a missing or non-string id throws NOWHERE: it
+ * arrives at the peer's access-control step as `undefined`, where at best the summary is dropped and
+ * at worst the key is used for a lookup that cannot succeed. That is a silent, remote-only failure —
+ * exactly the class this file exists to name rather than assume.
+ *
+ * IT REJECTS NOTHING THAT IS EMITTED TODAY: every current caller derives `sessionId` from a
+ * non-empty string and `updatedAt` from a finite number (or from `Date.now()`). The guard is for the
+ * NEXT caller, so a payload no host can resolve can never leave this layer unnoticed.
+ */
+function assertSessionSummary(payload         )                                                      {
+  if (typeof payload !== 'object' || payload === null) return false
+  const summary = payload                                                
+  if (typeof summary.sessionId !== 'string' || summary.sessionId.length === 0) return false
+  return typeof summary.updatedAt === 'number' && Number.isFinite(summary.updatedAt)
+}
+
+/**
  * The system head a freshly written session opens with.
  *
  * WHY IT MUST EXIST AT ALL: this host replaces surface node 0 with its own rendered prompt on the
@@ -3735,7 +3763,7 @@ async function createSession(ctx     , options               )                  
     }
     try {
       if (shouldPublish && typeof ctx?.emit === 'function') {
-        ctx.emit('api-session/added', {
+        const summary = {
           sessionId,
           updatedAt: createdAt,
           agentAvailable: false,
@@ -3743,8 +3771,24 @@ async function createSession(ctx     , options               )                  
           running: false,
           blank: false,
           cwd,
-        })
-        clientAnnounced = true
+        }
+        /**
+         * P1-3: validate BEFORE emitting, and skip rather than send a payload the peer cannot key by.
+         *
+         * A refused announcement is a REPORTED degradation (`warnings`), not a failed write: the tape
+         * is already durable at this point, and turning a sidebar gap into a write failure would be
+         * strictly worse. `assertSessionSummary` never rejects a payload derived the way this one is
+         * (see `policy.ts`) — it is here so a future caller cannot emit an unresolvable summary
+         * silently.
+         */
+        if (!assertSessionSummary(summary)) {
+          warnings.push(
+            `客户端通告跳过：载荷没有可解析的 sessionId/updatedAt（sessionId=${JSON.stringify(summary.sessionId)}）`,
+          )
+        } else {
+          ctx.emit('api-session/added', summary)
+          clientAnnounced = true
+        }
       }
     } catch (error) {
       warnings.push(`客户端通告失败：${String((error       )?.message ?? error)}`)
@@ -13832,7 +13876,7 @@ function createHarnessServer(options                      ) {
  * depends on: an upper layer passes its own marker(s) in, and the idempotence check honours every
  * alias. Exported here (bare, not `from`) for the same bundling reason as everything else.
  */
-export { DEFAULT_PROMPT_MARKER, isPromptText, markerToStamp }
+export { DEFAULT_PROMPT_MARKER, assertSessionSummary, isPromptText, markerToStamp }
 /**
  * THE TRUST SCALE is a value a CALLER compares against (`TRUST_ORDER[a] > TRUST_ORDER[b]`), which a type
  * cannot express. Re-exported here so a deployment does not have to reach into `protocol/` for it.

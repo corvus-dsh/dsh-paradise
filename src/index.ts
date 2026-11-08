@@ -35,8 +35,8 @@ import { isRenderedByConversation, PLUGIN_SOURCE_PREFIX } from './adapters/dsh/p
  * depends on: an upper layer passes its own marker(s) in, and the idempotence check honours every
  * alias. Exported here (bare, not `from`) for the same bundling reason as everything else.
  */
-import { DEFAULT_PROMPT_MARKER, isPromptText, markerToStamp } from './adapters/dsh/policy.js'
-export { DEFAULT_PROMPT_MARKER, isPromptText, markerToStamp }
+import { DEFAULT_PROMPT_MARKER, assertSessionSummary, isPromptText, markerToStamp } from './adapters/dsh/policy.js'
+export { DEFAULT_PROMPT_MARKER, assertSessionSummary, isPromptText, markerToStamp }
 import { escapeSessionDirName, sessionLogPath } from './adapters/dsh/paths.js'
 import { configureReadDefaults, readDiskEventTypes, readDiskEvents } from './read/disk.js'
 import { probeCapabilities } from './adapters/dsh/capability.js'

@@ -28,6 +28,7 @@ import { randomUUID } from 'node:crypto'
 import type { ContextItem, MutationReceipt, RenderedItem, SessionRef } from '../../protocol/index.js'
 import { InjectShapeError, assertTape, buildTape, describeRendered, isAbsoluteCwd, materialiseTape } from './inject.js'
 import { deleteSession } from './delete.js'
+import { assertSessionSummary } from './policy.js'
 import { service } from './services.js'
 
 /** What the writer produced, with proof for every claim. */
@@ -435,7 +436,7 @@ export async function createSession(ctx: any, options: CreateOptions): Promise<W
     }
     try {
       if (shouldPublish && typeof ctx?.emit === 'function') {
-        ctx.emit('api-session/added', {
+        const summary = {
           sessionId,
           updatedAt: createdAt,
           agentAvailable: false,
@@ -443,8 +444,24 @@ export async function createSession(ctx: any, options: CreateOptions): Promise<W
           running: false,
           blank: false,
           cwd,
-        })
-        clientAnnounced = true
+        }
+        /**
+         * P1-3: validate BEFORE emitting, and skip rather than send a payload the peer cannot key by.
+         *
+         * A refused announcement is a REPORTED degradation (`warnings`), not a failed write: the tape
+         * is already durable at this point, and turning a sidebar gap into a write failure would be
+         * strictly worse. `assertSessionSummary` never rejects a payload derived the way this one is
+         * (see `policy.ts`) — it is here so a future caller cannot emit an unresolvable summary
+         * silently.
+         */
+        if (!assertSessionSummary(summary)) {
+          warnings.push(
+            `客户端通告跳过：载荷没有可解析的 sessionId/updatedAt（sessionId=${JSON.stringify(summary.sessionId)}）`,
+          )
+        } else {
+          ctx.emit('api-session/added', summary)
+          clientAnnounced = true
+        }
       }
     } catch (error) {
       warnings.push(`客户端通告失败：${String((error as any)?.message ?? error)}`)

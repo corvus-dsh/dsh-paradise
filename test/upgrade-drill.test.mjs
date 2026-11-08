@@ -18,14 +18,62 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   apply,
   createDshAdapters,
+  inject,
   probeHostCapabilities,
   assertHostCapabilities,
   REQUIRED_HOST_CAPABILITIES,
 } from '../index.js'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const bundleSource = readFileSync(join(here, '..', 'index.js'), 'utf8')
+
+/**
+ * ── 2026-11-08: THE DRILL RAN BEFORE THE HOST WAS MOUNTED, AND THE ROW DIED ────────────────────
+ *
+ * `inject: []` + a strict boot assertion is a contradiction, and it killed the row on every cold
+ * boot: the fiber waited for nothing, `apply` ran at the first tick, the drill measured an empty host
+ * and refused to mount. Cordis does not retry a failed fiber, so the plugin never recovered.
+ *
+ * MEASURED, not inferred: unloading and re-mounting the same row once the host was up flipped
+ * `fiberPhase` from `failed` to `active` with no code change.
+ *
+ * These two tests pin the halves of the fix: the declaration must COVER what the drill asserts, and
+ * the drill must still be strict (a lenient drill would have hidden the same bug — and would defeat
+ * the whole point of the table).
+ */
+test('drill: EVERY asserted API is also DECLARED to the Loader, or the drill cannot run', () => {
+  const asserted = [...new Set(REQUIRED_HOST_CAPABILITIES.map((entry) => entry.service))]
+  assert.ok(asserted.length > 0, 'the table must not be empty, or this test proves nothing')
+  for (const service of asserted) {
+    assert.ok(
+      inject.includes(service),
+      `inject must declare "${service}": it is asserted at boot, and a fiber that does not wait for it measures an unmounted host`,
+    )
+  }
+  assert.equal(new Set(inject).size, inject.length, 'a duplicated declaration hides a missing one')
+})
+
+test('drill: the boot path is still STRICT — the fix must not have dissolved the drill', () => {
+  assert.match(
+    bundleSource,
+    /assertHostCapabilitiesOnBoot\(ctx\)/u,
+    'apply must still run the strict boot assertion; declaring the services is what makes it meaningful',
+  )
+  /**
+   * And the refusal still surfaces as a throw with the named code, not a log line: a mounted row that
+   * silently degrades is the failure this drill exists to prevent.
+   */
+  const ctx = mountedCtx()
+  delete ctx.sessions.prepare
+  assert.throws(() => apply(ctx), (error) => error?.code === 'HOST_CAPABILITY_MISSING')
+})
 
 /** A context with every API the table asks for. */
 function mountedCtx() {

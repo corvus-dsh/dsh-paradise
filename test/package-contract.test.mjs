@@ -55,10 +55,39 @@ test('the patch inserts exactly one row, with no config', () => {
   assert.equal(patch.includes('config:'), false, 'the layer takes no config at P1')
 })
 
-test('the layer declares NO services and NO tools — it is a library', () => {
+/**
+ * ── 2026-11-08: THIS TEST USED TO ASSERT `services: []`, AND THAT ASSERTION WAS THE BUG ──────────
+ *
+ * "No `inject` services" is right for a layer that only PROBES at call time, and wrong for one that
+ * runs a STRICT assertion at boot: with nothing injected the fiber waits for nothing, `apply` ran
+ * before the host had mounted `sessions`/`sessionPersistence`/`sessionQuery`/`sessionController`, and
+ * the drill measured an empty host and refused to mount — `fiberPhase: failed` on every cold boot,
+ * forever (Cordis does not retry). Measured: unloading and re-mounting the same row once the host was
+ * up turned it `active`, with no code change.
+ *
+ * So the contract is no longer "declares nothing". It is the one that makes the drill runnable:
+ * THE DECLARED SERVICES COVER THE APIs THE DRILL ASSERTS. A new required API added to the table
+ * without being declared fails here, which is exactly the failure that reached a live profile.
+ */
+test('the layer declares every service its boot drill asserts (and registers no tools)', () => {
   const manifest = JSON.parse(read('manifest.json'))
-  assert.deepEqual(manifest.services, [], 'declaring inject would make a read-only profile refuse to activate')
+  const pkg = read('index.js')
+  const declared = [...manifest.services].sort()
+  assert.deepEqual(
+    declared,
+    ['sessionController', 'sessionPersistence', 'sessionQuery', 'sessions'],
+    'the declaration must be the drill’s service set, sorted here for a stable message',
+  )
   assert.deepEqual(manifest.tools, [], 'it registers nothing')
-  const bundle = read('index.js')
-  assert.equal(/ctx\.tools\?\.register\(/u.test(bundle), false, 'and nothing in the code registers a tool')
+  assert.match(
+    pkg,
+    /\[\.\.\.REQUIRED_HOST_SERVICES\]/u,
+    'the module must DERIVE its declaration from the capability table, so the two cannot drift',
+  )
+  assert.equal(
+    /\bsession(Persistence|Controller|Query)\b/u.test(read('src/index.ts')),
+    false,
+    'and the derivation must live under src/adapters/<host>/: this file is neutral (see isolation.test.mjs)',
+  )
+  assert.equal(/ctx\.tools\?\.register\(/u.test(pkg), false, 'and nothing in the code registers a tool')
 })

@@ -79,8 +79,28 @@ export const REQUIRED_HOST_CAPABILITIES: readonly RequiredCapability[] = [
   },
 ]
 
-export interface CapabilityAssertion {
-  ok: boolean
+/**
+ * THE SERVICE NAMES THE TABLE REQUIRES, DEDUPED — what a plugin's `inject` MUST declare.
+ *
+ * ── WHY THIS EXISTS AT ALL (2026-11-08) ────────────────────────────────────────────────────────
+ *
+ * The boot drill asserts the table above. With nothing declared in `inject`, the fiber waits for
+ * nothing, `apply` runs before this host has finished mounting, the drill measures an EMPTY host and
+ * refuses to mount — and Cordis marks the fiber `failed` for the life of the process. Measured:
+ * re-mounting the same row after the host was up flipped it to `active` with no code change.
+ *
+ * `inject` is this framework's mechanism for "wait until these exist", so the requirement and the
+ * declaration have to come from ONE source. They did not, and the declaration was empty.
+ *
+ * IT LIVES HERE, NOT IN `index.ts`, because the service names are host specifics: the neutral layer
+ * may not name them (the isolation gate scans every source file outside `src/adapters/`). The entry
+ * point therefore declares `inject` from this symbol without naming a single service itself.
+ */
+export const REQUIRED_HOST_SERVICES: readonly string[] = [
+  ...new Set(REQUIRED_HOST_CAPABILITIES.map((entry) => entry.service)),
+]
+
+export interface CapabilityAssertion {  ok: boolean
   /** Every missing API, with its consequence and the file to edit. */
   missing: Array<RequiredCapability & { how: string }>
   /** The one-line refusal, ready to throw or print. */

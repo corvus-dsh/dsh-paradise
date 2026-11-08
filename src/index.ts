@@ -67,6 +67,7 @@ import {
   assertHostCapabilitiesOnBoot,
   probeHostCapabilities,
   REQUIRED_HOST_CAPABILITIES,
+  REQUIRED_HOST_SERVICES,
 } from './adapters/dsh/assert-capabilities.js'
 import { withLease } from './lease.js'
 import { createMemoryStorageAdapter } from './storage-memory.js'
@@ -134,13 +135,41 @@ export const resolveService = service
 export const name = 'dsh-paradise'
 
 /**
- * No hard service dependencies.
+ * THE SERVICES THE BOOT DRILL ASSERTS — declared to the Loader so the drill can RUN AT ALL.
  *
- * Everything this layer touches it probes first (`probeCapabilities`), and every capability it cannot
- * find is REPORTED rather than assumed. Declaring `inject` would make a profile that merely wants the
- * disk reader refuse to activate — the wrong trade for a read-first layer.
+ * ── LIVE INCIDENT (2026-11-08): THIS ROW WAS `failed` ON EVERY COLD BOOT ───────────────────────
+ *
+ * This used to be an EMPTY list, reasoning that "everything is probed at call time, so a profile that
+ * only wants the disk reader activates cleanly". That is right for CALL-TIME probing and wrong for the
+ * BOOT-TIME drill shipped in the same release:
+ *
+ *   `apply` calls `assertHostCapabilitiesOnBoot(ctx)`, which is STRICT. With nothing injected the fiber
+ *   waits for nothing, so `apply` runs at the first tick — before the host has mounted the services the
+ *   capability table names. The drill then measures an EMPTY host, reports every API missing, and
+ *   refuses to mount. Cordis marks the fiber `failed` and does not retry, so the row stayed failed for
+ *   the whole life of the process.
+ *
+ * MEASURED, NOT INFERRED: unloading and re-mounting the SAME row once the host was up turned
+ * `fiberPhase` from `failed` to `active` with no code change. The assertion was right; it was
+ * measuring too early to mean anything.
+ *
+ * THE FIX IS THE FRAMEWORK'S OWN MECHANISM: `inject` is what makes a fiber WAIT for its dependencies,
+ * and it is the only thing that does. Declaring what the drill asserts turns a boot race into a
+ * dependency wait, so the drill measures a mounted host — while a host upgrade that genuinely removed
+ * one of these APIs still stops the load with the named refusal.
+ *
+ * DERIVED, NOT RETYPED: the list comes from the same table the drill checks, in `adapters/dsh/`, which
+ * is also where the service NAMES have to live (this file is neutral, and the isolation gate forbids a
+ * host service name outside the adapter directory). A new required API therefore cannot be asserted
+ * without also being declared; `test/upgrade-drill.test.mjs` pins the invariant.
+ *
+ * THE TRADE-OFF, STATED PLAINLY: a profile that mounts NONE of these services now leaves this row
+ * pending instead of activating-and-probing. That is the honest outcome for a row whose only job is to
+ * prove the write surface exists; the READ layer is untouched, because every consumer dynamic-requires
+ * this package and passes ITS OWN context (`createDshAdapters(ctx)`). If a bare profile ever needs the
+ * ROW itself, the answer is a drill deferred to a ready event — not an empty `inject`.
  */
-export const inject: string[] = []
+export const inject: string[] = [...REQUIRED_HOST_SERVICES]
 
 /** The neutral reader gets a rendering answer from whichever adapter is in play. */
 configureReadDefaults({ isRendered: isRenderedByConversation })
@@ -274,6 +303,8 @@ export {
   assertHostCapabilities,
   probeHostCapabilities,
   REQUIRED_HOST_CAPABILITIES,
+  /** The same table's services, deduped — what `inject` declares, and what a test pins it against. */
+  REQUIRED_HOST_SERVICES,
   /** Diagnostics: how many abandoned guards were reclaimed. */
   guardSteals,
   withLease,

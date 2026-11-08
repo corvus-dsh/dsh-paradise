@@ -5,7 +5,7 @@
   "entry": "index.js",
   "activate": "activate(ctx, config)",
   "permissions": [],
-  "services": [],
+  "services": ["sessions", "sessionPersistence", "sessionQuery", "sessionController"],
   "hooks": [],
   "tools": [],
   "engines": {
@@ -26,6 +26,6 @@
     "P1.5 delivers the protocol and ONE complete non-host implementation (adapters/memory) that the conformance suite runs against — the decoupling claim is executed, not asserted.",
     "The write layer (create/inject/trigger) is still P2. The host adapter reports those verbs as unavailable through capabilities and refuses them with NOT_WIRED.",
     "Mount this bundle BEFORE the plugins that import it: they import it, and Loader ordering is what makes a missing layer a named error instead of a crash.",
-    "No `inject` services: everything is probed at call time, so a profile that only wants the disk reader activates cleanly."
+    "The row DECLARES the four services its boot drill asserts. The empty list it used to carry was correct for call-time probing and wrong for the boot-time drill: with nothing injected the fiber waited for nothing, the strict drill measured a host that had not finished mounting, and the row was marked `failed` on every cold boot (measured: re-mounting the same row afterwards succeeds). `inject` is the framework's mechanism for waiting, so the requirement and the declaration now come from one table."
   ]
 }

@@ -482,6 +482,21 @@ export type { HarnessEvent, HarnessOptions, HarnessSessionState, ParadiseHarness
 import { createHarnessServer } from './harness-http.js'
 export { createHarnessServer }
 export type { HarnessServerOptions } from './harness-http.js'
+/**
+ * THE TASK TOPOLOGY VIEW's data function.
+ *
+ * Exported because it is the contract between the two layers: the memory plugin writes
+ * `task-graph.json`, and this reads it. A test can exercise the whole projection without starting an
+ * HTTP server, which is the only way "the DAG view shows the right columns" is checkable at all.
+ *
+ * IMPORTED THEN RE-EXPORTED BARE, never as a `from`-form re-export of a relative path: the bundler
+ * inlines modules into one file, and a `from` form survives as a real ESM import of a path that no
+ * longer exists — it fails at IMPORT time while `node --check` passes. `scripts/bundle.mjs` refuses
+ * it for exactly that reason.
+ */
+import { readTopology } from './topology.js'
+export { readTopology }
+export type { TopologyEdge, TopologyNode, TopologyView } from './topology.js'
 
 /**
  * Test seam: the write SHAPE functions.

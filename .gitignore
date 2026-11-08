@@ -23,3 +23,7 @@ node_modules/
 !dist/harness.js
 !dist/harness-server.js
 !dist/watchdog.js
+
+# Local console home (demo graph + sessions written by scripts/serve-console.mjs)
+.starfire-console/
+.paradise-harness/

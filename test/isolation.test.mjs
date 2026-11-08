@@ -246,6 +246,19 @@ test('isolation: every host-specific file lives under adapters/', () => {
     'harness-server.ts',
     'harness-http.ts',
     'ws-server.ts',
+    /**
+     * `topology.ts` — THE HOST'S VIEW OF THE TASK GRAPH.
+     *
+     * It belongs at the top level for the same reason as the three above: it is part of the host
+     * ITSELF (the UI's data), and it must load on a machine with no DSH installed. It reads
+     * `<home>/memory/task-graph.json` and `<home>/knowledge/knowledge.jsonl` — the file contract the
+     * memory plugin writes — and imports nothing but `node:fs` and `node:path`.
+     *
+     * IT IS NOT AN ADAPTER. There is no host to adapt to: the shape it returns is this layer's own
+     * projection for its own page. Putting it under `adapters/<host>/` would claim a dependency it
+     * does not have.
+     */
+    'topology.ts',
   ]
   const top = readdirSync(srcDir, { withFileTypes: true }).map((entry) => entry.name)
   const unexpected = top.filter((name) => !allowed.includes(name))

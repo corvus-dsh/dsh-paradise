@@ -32,6 +32,7 @@ import { createParadiseHarness } from './harness-server.js'
 import type { HarnessOptions, SessionStatus } from './harness-server.js'
 import { attachSocketServer } from './ws-server.js'
 import type { Socket } from './ws-server.js'
+import { readTopology } from './topology.js'
 
 /** The UI. One page: sidebar of nodes, transcript, status panel. */
 const PAGE = `<!doctype html>
@@ -91,6 +92,32 @@ const PAGE = `<!doctype html>
   .empty { color: var(--muted); padding: 24px; text-align: center; font-size: 13px; }
   .status-ok { color: var(--ok); } .status-warn { color: var(--warn); }
   .status-bad { color: var(--bad); }
+  /* ── 任务拓扑 ─────────────────────────────────────────────────────────────────────────────── */
+  .tabs { display: flex; gap: 6px; margin-left: auto; }
+  .tabs button { padding: 4px 12px; font-size: 12px; }
+  .tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #topology { display: none; flex: 1; overflow: auto; padding: 16px;
+              font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  #topology.on { display: block; }
+  #topology .frame { display: grid; grid-template-columns: 1fr 340px; gap: 16px; min-height: 100%; }
+  #topology svg { width: 100%; height: auto; min-height: 420px; background: #0d1117;
+                  border: 1px solid var(--border); border-radius: 8px; }
+  #topology .side { background: var(--panel); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 12px; overflow-y: auto; max-height: 70vh; }
+  #topology .side h3 { margin: 0 0 8px; font-size: 14px; }
+  #topology .side .phase { color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  #topology .side ul { margin: 6px 0; padding-left: 18px; }
+  #topology .side li { margin: 3px 0; }
+  #topology .kn { display: block; padding: 6px 8px; margin: 4px 0; border-radius: 6px;
+                  background: #1f6feb22; border: 1px solid #1f6feb55; }
+  #topology .kn.missing { background: #f8514922; border-color: #f8514966; color: var(--bad); }
+  #topology .warn { border: 1px solid #d2992266; background: #d2992222; color: var(--warn);
+                    border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+  #topology .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px;
+                      color: var(--muted); font-size: 11px; }
+  #topology .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block;
+                        margin-right: 4px; vertical-align: middle; }
+  #topology .goal { color: var(--muted); margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -112,6 +139,10 @@ const PAGE = `<!doctype html>
   <div class="toolbar">
     <strong id="chat-title">未选择节点</strong>
     <span style="flex:1"></span>
+    <div class="tabs">
+      <button id="tab-chat" class="on">对话</button>
+      <button id="tab-topo">任务拓扑</button>
+    </div>
     <button id="btn-distill">一键提炼记忆</button>
     <button id="btn-kill">终止节点</button>
   </div>
@@ -119,6 +150,9 @@ const PAGE = `<!doctype html>
   <div class="composer">
     <input id="input" placeholder="对一个节点说话…" autocomplete="off">
     <button class="primary" id="btn-send">发送</button>
+  </div>
+  <div id="topology">
+    <div id="topo-body"><div class="empty">正在读取任务拓扑…</div></div>
   </div>
 </main>
 
@@ -268,6 +302,240 @@ const PAGE = `<!doctype html>
   }
 
   function selectSession(id) { state.active = id; renderNodes(); renderTranscript(); }
+
+  /**
+   * ── TASK TOPOLOGY: A DAG DRAWN WITH PLAIN SVG ────────────────────────────────────────────────
+   *
+   * WHY NO LIBRARY. The page is one inlined document with no bundler and no network access, so a
+   * D3 import would mean shipping a second artefact that can go missing. A layered DAG needs three
+   * things — column by depth, row by position within the column, an arrow per edge — and all three
+   * are a few loops. The LAYOUT is computed on the HOST (see topology.ts) and shipped as a level
+   * index per node, so this function only decides pixels.
+   *
+   * NO BACKTICKS ANYWHERE IN THIS BLOCK. The whole page is one template string; a stray backtick
+   * closes it and the TypeScript parser then reads JavaScript as TypeScript.
+   */
+  const STATUS_COLOR = { done: '#3fb950', active: '#d29922', pending: '#8b949e', abandoned: '#f85149' };
+  const STATUS_TEXT = { done: '已完成', active: '进行中', pending: '待开始', abandoned: '已废弃' };
+  const PHASE_ICON = {
+    analysis: '◍', design: '◇', coding: '⚙', testing: '✓', refactoring: '↻',
+    debugging: '⚠', docs: '✎', ops: '☰',
+  };
+
+  function phaseIcon(phase) {
+    return PHASE_ICON[phase] || (phase ? '●' : '▫');
+  }
+
+  function svgEl(tag, attrs) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const key in attrs) node.setAttribute(key, String(attrs[key]));
+    return node;
+  }
+
+  const NODE_W = 168, NODE_H = 54, GAP_X = 92, GAP_Y = 26, PAD = 24;
+
+  function renderTopology(view) {
+    const box = $('topo-body');
+    box.innerHTML = '';
+
+    if (!view.available) {
+      box.appendChild(el('div', 'empty', view.reason || '没有可显示的任务图。'));
+      const hint = el('div', 'empty', '路径：' + (view.path || '(未知)'));
+      hint.style.fontSize = '11px';
+      box.appendChild(hint);
+      return;
+    }
+
+    for (const warning of view.warnings || []) box.appendChild(el('div', 'warn', warning));
+
+    const goal = el('div', 'goal');
+    goal.textContent = (view.goal ? '目标：' + view.goal : '目标：尚未锁定') +
+      (view.goalLockedAt ? '  🔒 已锁定' : '') +
+      '　·　节点 ' + view.counts.total + '　·　知识 ' + view.knowledgeTotal + ' 条';
+    box.appendChild(goal);
+
+    const legend = el('div', 'legend');
+    for (const status of ['done', 'active', 'pending', 'abandoned']) {
+      const item = el('span');
+      const chip = el('i');
+      chip.style.background = STATUS_COLOR[status];
+      item.appendChild(chip);
+      item.appendChild(document.createTextNode(STATUS_TEXT[status]));
+      legend.appendChild(item);
+    }
+    box.appendChild(legend);
+
+    const frame = el('div', 'frame');
+    const side = el('div', 'side');
+    side.appendChild(el('div', 'empty', '点左侧任一节点，这里显示它的要求与关联知识。'));
+    frame.appendChild(drawGraph(view, side));
+    frame.appendChild(side);
+    box.appendChild(frame);
+  }
+
+  function drawGraph(view, side) {
+    const columns = new Map();
+    for (const node of view.nodes) {
+      const level = Number(node.level) || 0;
+      if (!columns.has(level)) columns.set(level, []);
+      columns.get(level).push(node);
+    }
+    const levelKeys = [...columns.keys()].sort((a, b) => a - b);
+    let tallest = 0;
+    for (const level of levelKeys) tallest = Math.max(tallest, columns.get(level).length);
+
+    const width = PAD * 2 + levelKeys.length * NODE_W + Math.max(0, levelKeys.length - 1) * GAP_X;
+    const height = PAD * 2 + tallest * NODE_H + Math.max(0, tallest - 1) * GAP_Y;
+    const svg = svgEl('svg', { viewBox: '0 0 ' + Math.max(width, 320) + ' ' + Math.max(height, 200) });
+
+    /** Drawn first, so the arrowhead marker exists before any <path> references it. */
+    const defs = svgEl('defs');
+    const marker = svgEl('marker', {
+      id: 'topo-arrow', viewBox: '0 0 10 10', refX: '9', refY: '5',
+      markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse',
+    });
+    marker.appendChild(svgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: '#4a9eff' }));
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    const positions = new Map();
+    for (const level of levelKeys) {
+      const bucket = columns.get(level);
+      const columnHeight = bucket.length * NODE_H + Math.max(0, bucket.length - 1) * GAP_Y;
+      const offset = (height - columnHeight) / 2;
+      bucket.forEach((node, index) => {
+        positions.set(node.id, {
+          x: PAD + level * (NODE_W + GAP_X),
+          y: offset + index * (NODE_H + GAP_Y),
+        });
+      });
+    }
+
+    for (const edge of view.edges) {
+      const from = positions.get(edge.from);
+      const to = positions.get(edge.to);
+      if (!from || !to) continue;
+      const x1 = from.x + NODE_W, y1 = from.y + NODE_H / 2;
+      const x2 = to.x, y2 = to.y + NODE_H / 2;
+      const bend = Math.max(24, (x2 - x1) / 2);
+      svg.appendChild(svgEl('path', {
+        d: 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + bend) + ' ' + y1 + ', ' +
+           (x2 - bend) + ' ' + y2 + ', ' + x2 + ' ' + y2,
+        fill: 'none', stroke: '#4a9eff', 'stroke-width': '1.4',
+        'stroke-opacity': '0.65', 'marker-end': 'url(#topo-arrow)',
+      }));
+    }
+
+    let selected = null;
+    for (const node of view.nodes) {
+      const position = positions.get(node.id);
+      if (!position) continue;
+      const group = svgEl('g', { style: 'cursor:pointer' });
+      const color = STATUS_COLOR[node.status] || '#8b949e';
+      group.appendChild(svgEl('rect', {
+        x: position.x, y: position.y, width: NODE_W, height: NODE_H, rx: 8,
+        fill: '#161b22', stroke: color, 'stroke-width': node.status === 'active' ? 2.4 : 1.2,
+      }));
+      group.appendChild(svgEl('rect', {
+        x: position.x, y: position.y, width: 4, height: NODE_H, rx: 2, fill: color,
+      }));
+      const icon = svgEl('text', {
+        x: position.x + 14, y: position.y + 21, fill: color,
+        'font-size': '13', 'font-family': 'monospace',
+      });
+      icon.textContent = phaseIcon(node.phase);
+      group.appendChild(icon);
+      const label = svgEl('text', {
+        x: position.x + 32, y: position.y + 21, fill: '#e6edf3', 'font-size': '12',
+      });
+      label.textContent = (node.phase ? node.phase + ' · ' : '') + node.title;
+      group.appendChild(label);
+      const sub = svgEl('text', {
+        x: position.x + 14, y: position.y + 42, fill: '#8b949e', 'font-size': '10',
+      });
+      sub.textContent = node.id + ' · ' + (STATUS_TEXT[node.status] || node.status) +
+        ' · 知识 ' + node.knowledge.length;
+      group.appendChild(sub);
+      group.addEventListener('click', () => {
+        if (selected) selected.setAttribute('stroke-width', '1.2');
+        selected = group.querySelector('rect');
+        if (selected) selected.setAttribute('stroke-width', '3');
+        renderNodeSide(side, node);
+      });
+      svg.appendChild(group);
+    }
+    return svg;
+  }
+
+  function renderNodeSide(side, node) {
+    side.innerHTML = '';
+    side.appendChild(el('div', 'phase', (STATUS_TEXT[node.status] || node.status) + (node.phase ? ' · ' + node.phase : '')));
+    side.appendChild(el('h3', '', node.title));
+    const idLine = el('div', 'kv');
+    idLine.appendChild(el('span', '', '节点 id'));
+    idLine.appendChild(el('span', '', node.id));
+    side.appendChild(idLine);
+    if (node.dependsOn.length > 0) {
+      const row = el('div', 'kv');
+      row.appendChild(el('span', '', '依赖'));
+      row.appendChild(el('span', '', node.dependsOn.join(', ')));
+      side.appendChild(row);
+    }
+    if (node.unlocks.length > 0) {
+      const row = el('div', 'kv');
+      row.appendChild(el('span', '', '解锁'));
+      row.appendChild(el('span', '', node.unlocks.join(', ')));
+      side.appendChild(row);
+    }
+
+    side.appendChild(el('div', 'panel-title', '阶段要求'));
+    if (node.requirements.length === 0) {
+      side.appendChild(el('div', 'empty', '这个节点没有写下要求。'));
+    } else {
+      const list = el('ul');
+      for (const requirement of node.requirements) list.appendChild(el('li', '', requirement));
+      side.appendChild(list);
+    }
+
+    side.appendChild(el('div', 'panel-title', '关联全局知识'));
+    if (node.knowledge.length === 0 && node.missingPointers.length === 0) {
+      side.appendChild(el('div', 'empty', '这个节点还没有锚定任何知识。'));
+    }
+    for (const entry of node.knowledge) {
+      const card = el('div', 'kn');
+      card.appendChild(el('strong', '', entry.title));
+      const tags = (entry.tags || []).join(', ');
+      const phases = (entry.nodeTypes || []).join(', ');
+      card.appendChild(el('div', '', (entry.kind === 'negative' ? '⚠ 教训' : '✦ 技能') +
+        (tags ? ' · ' + tags : '') + (phases ? ' · ' + phases : '')));
+      side.appendChild(card);
+    }
+    for (const missing of node.missingPointers) {
+      side.appendChild(el('div', 'kn missing', '悬空指针：' + missing));
+    }
+  }
+
+  async function refreshTopology() {
+    try {
+      const response = await fetch('/api/topology');
+      renderTopology(await response.json());
+    } catch (error) {
+      renderTopology({ available: false, reason: '读取 /api/topology 失败：' + String(error), nodes: [], edges: [], warnings: [], counts: { total: 0 } });
+    }
+  }
+
+  function showTab(which) {
+    const chat = which === 'chat';
+    $('tab-chat').className = chat ? 'on' : '';
+    $('tab-topo').className = chat ? '' : 'on';
+    $('transcript').style.display = chat ? '' : 'none';
+    document.querySelector('.composer').style.display = chat ? '' : 'none';
+    $('topology').className = chat ? '' : 'on';
+    if (!chat) refreshTopology();
+  }
+
+  $('tab-chat').onclick = () => showTab('chat');
+  $('tab-topo').onclick = () => showTab('topo');
 
   async function refresh() {
     try {
@@ -439,6 +707,25 @@ export function createHarnessServer(options: HarnessServerOptions) {
     if (request.method === 'GET' && (url === '/' || url.startsWith('/?'))) {
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       response.end(PAGE)
+      return
+    }
+    if (request.method === 'GET' && url === '/api/topology') {
+      /**
+       * THE TASK TOPOLOGY, read from the files the memory layer writes.
+       *
+       * It is its own endpoint rather than a field on `/api/state` because the two change at
+       * different rates: `/api/state` is polled for transcripts, while the graph changes only when
+       * the model edits it. Keeping them apart also means the graph view can be refreshed without
+       * re-reading every session.
+       */
+      sendJson(
+        response,
+        200,
+        readTopology({
+          home: options.home,
+          globalKnowledgeDir: `${process.env.HOME ?? process.env.USERPROFILE ?? ''}/.dsh/global-knowledge`,
+        }),
+      )
       return
     }
     if (request.method === 'GET' && url === '/api/state') {

@@ -14349,6 +14349,27 @@ export const writeShapeInternals = {
 }
 
 /** Test seam: the pure pieces, reachable without a host. */
+/* ── THE TWO `…Internals` EXPORTS, AND WHY ONLY ONE OF THEM IS A TEST SEAM ────────────────────────
+ *
+ * `writeShapeInternals` IS a test seam: one test file uses it (`test/shape-validation.test.mjs`), no
+ * production code does, and its shape is free to change.
+ *
+ * `paradiseInternals` IS NOT. It is a CROSS-REPOSITORY CONTRACT, and the evidence is in a sibling's
+ * PRODUCTION source, not in a test: `dsh-graft-slice/src/core/paradise-write.ts` reads
+ * `mod.paradiseInternals.VERSION` to report which layer version it actually loaded, and
+ * `scripts/preflight.mjs` asserts the object is present. Note the failure mode hiding in that access:
+ * it is optional-chained, so renaming or folding this export does not throw — graft simply stops
+ * reporting a version, and the `version` field quietly disappears from a receipt nothing else checks.
+ *
+ * SO: `writeShapeInternals` may be folded or renamed with the tests; `paradiseInternals` may not be
+ * touched without editing `dsh-graft-slice` in the same change. `test/v102-seam-inventory.test.mjs`
+ * pins both the NAMES and the one field the cross-repo contract actually depends on (`VERSION` is a
+ * string), because a name-only lock would not have caught the silent-version case.
+ *
+ * LOCK RULE (proportionate and stated, same as the other three bundles): the FULL surface is pinned
+ * where it is small enough to read (dsh-observer 16, dsh-memory 31); the seam-shaped subset is pinned
+ * where the entry is large — this one exports 97 names.
+ */
 export const paradiseInternals = {
   escapeSessionDirName,
   sessionLogPath,

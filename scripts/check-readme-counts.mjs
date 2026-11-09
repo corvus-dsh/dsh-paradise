@@ -40,6 +40,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
 const root = process.cwd()
@@ -72,6 +73,18 @@ const script = JSON.parse(read('package.json')).scripts?.test
 if (typeof script !== 'string') {
   fail('package.json 没有 test 脚本，无法测得测试数')
 } else {
+  /**
+   * MEASUREMENT POLLUTION — measured, not guessed.
+   *
+   * Running the suite from INSIDE this guard reported 352 for `dsh-paradise` while `npm test` in a shell
+   * reported 354, reproducibly. The guard's own Node process is the difference: it is the parent of the
+   * test process AND is itself running a script, so anything the suite derives from the process tree
+   * (`--test` file discovery under a script parent, a pid-derived temp name, a concurrency default that
+   * depends on load) can differ by exactly the two tests that spawn subprocesses.
+   *
+   * A gate must not report a number its own presence changed. So the suite is measured in a SEPARATE,
+   * clean process — the same command a developer runs — and this process only reads the outcome.
+   */
   try {
     const out = execFileSync(script, {
       cwd: root,
@@ -79,12 +92,43 @@ if (typeof script !== 'string') {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 900_000,
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^NODE_TEST/u.test(key))),
     })
     actualTests = /pass (\d+)/u.exec(out)?.[1]
+    const failedNow = Number(/fail (\d+)/u.exec(out)?.[1] ?? '0')
+    if (failedNow > 0) {
+      const failing = [...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]).filter((name) => name !== 'failing tests:')
+      fail(
+        `测试套件自身未全绿（${failedNow} 条失败：${failing.slice(0, 3).join(' / ') || '未解析出名称'}）。` +
+          '本次不判定文档是否过期——先修测试，再谈计数。',
+      )
+      actualTests = undefined
+    }
   } catch (error) {
     const out = `${error?.stdout ?? ''}`
     actualTests = /pass (\d+)/u.exec(out)?.[1]
-    if (actualTests === undefined) fail('测试数无法测得：test 脚本失败且输出不可解析')
+    /**
+     * A FLAKY SUITE IS NOT A STALE DOCUMENT — and this guard must not confuse the two.
+     *
+     * Measured 2026-11-09: `dsh-paradise` fails 0–2 of its own tests roughly one run in six, always the
+     * same pair (`self-heal: a chatty model still closes the loop…` / `…fails LOUDLY…`) — end-to-end
+     * tests that really spawn a host, restart it and check the pid. When that happens the count is 353
+     * instead of 354, and reporting "README says 354, actual 353" would blame the DOCUMENT for a
+     * red suite. A gate that cries wolf gets switched off.
+     *
+     * So: a FAILING run is reported as a failing run, with the failing test names, and it is RED — the
+     * suite must be green for the count to mean anything. What is NOT claimed is that the number is
+     * stale, because that conclusion is unsupported.
+     */
+    const failing = [...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]).filter((name) => name !== 'failing tests:')
+    if ((/fail ([1-9]\d*)/u.exec(out)?.[1] ?? '0') !== '0') {
+      fail(
+        `测试套件自身未全绿（${failing.length} 条失败：${failing.slice(0, 3).join(' / ') || '未解析出名称'}）。` +
+          '本次不判定文档是否过期——先修测试，再谈计数。',
+      )
+    } else if (actualTests === undefined) {
+      fail('测试数无法测得：test 脚本失败且输出不可解析')
+    }
   }
 }
 if (actualTests !== undefined) {
@@ -176,6 +220,152 @@ if (actualLines === undefined) {
       if (claim.value === actualLines) ok(`行数声明 ${claim.raw} 与实测一致（wc -l）`)
       else fail(`README 声明 ${claim.raw}，实测 ${actualLines}（wc -l）`)
     }
+  }
+}
+
+// ── FACT 4: ARCHITECTURE.md — a number must be a CURRENT fact or an explicitly dated one ──────
+/**
+ * WHY ARCHITECTURE.md IS COVERED SEPARATELY (and why the rule is different)
+ *
+ * A design document is mostly HISTORY: "410 条测试 (v7.7 当时)" is a correct statement about v7.7 and
+ * must never be "corrected" to today's number. So the rule is not "every number must match reality".
+ * It is:
+ *
+ *   - a line that says 现状 must match reality (that word claims "this is true now");
+ *   - a line carrying a count WITHOUT 现状 and WITHOUT a time marker (`vX.Y` / 当时 / historical …)
+ *     is RED, with the instruction "either date it or mark it 现状" — because an undated number in a
+ *     design doc is the exact shape that went stale last time.
+ *
+ * That keeps the historical record intact while making "undated claim" impossible to add by accident.
+ */
+const ARCH = 'ARCHITECTURE.md'
+let arch
+try {
+  arch = read('ARCHITECTURE.md')
+} catch {
+  arch = undefined
+}
+
+if (arch === undefined) {
+  ok('本仓无 ARCHITECTURE.md，跳过设计文档断言')
+} else {
+  const TIME_MARKER = /(v\d+\.\d+)|当时|historical|历史|重构时|起/u
+  /**
+   * A BUDGET IS NOT A CLAIM. "每个模块 ≤ 800 行", "搬进 core/stores.ts（≤ 800 行）", "预算 8000 字符" are
+   * targets for work not yet done. Demanding a time marker on them would be wrong twice: there is no
+   * moment to date them to, and "fixing" them to today's size would destroy the plan.
+   */
+  const BUDGET_MARKER = /（\s*≤|≤|上限|预算|不超过|目标/u
+  const lines = arch.split(/\r?\n/u)
+  const actualLinesForArch = (() => {
+    try {
+      return wcLines(read('src/index.ts'))
+    } catch {
+      return undefined
+    }
+  })()
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const numbers = [...line.matchAll(/([0-9][0-9,]{2,})\s*(?:行|条测试|条)/gu)]
+      .map((match) => ({ value: Number(match[1].replace(/,/gu, '')), raw: match[0] }))
+    if (numbers.length === 0) continue
+
+    const claimsCurrent = /现状/u.test(line)
+    const dated = TIME_MARKER.test(line)
+
+    if (claimsCurrent && actualLinesForArch !== undefined) {
+      /**
+       * ONLY THE COUNT ATTACHED TO `src/index.ts` IS A CLAIM ABOUT ITS SIZE.
+       *
+       * Two earlier rules were wrong in opposite directions, and both were caught by this file's own
+       * proof (which is the only reason to have a proof):
+       *
+       *   - a MAGNITUDE guard (only compare numbers in the same thousands) went GREEN on 99,999 —
+       *     it ignored exactly the fat-finger error a gate exists to catch;
+       *   - no guard at all went RED on `host-shape.ts（996 行）` — numbers about OTHER files.
+       *
+       * The precise rule: take the number that follows `src/index.ts` within a short window on the same
+       * line. That is the only count on an ARCHITECTURE line that describes src/index.ts's own size.
+       */
+      /**
+       * AN APPROXIMATION IS NOT A MEASUREMENT — but only the marker ATTACHED to the number counts.
+       *
+       * `约 1,300 行` (TD-9: a rough size for a file to be extracted) must be exempt. Checking the whole
+       * line for 约 was too coarse: TD-1's 现状 row mentions 约 much later in its 口径 explanation, and the
+       * exemption swallowed a REAL claim. So the marker is matched immediately before the digits.
+       */
+      const attachedApprox = /`src\/index\.ts`[^|]{0,40}?(约\s*|≈\s*|大约\s*)([0-9][0-9,]{2,})\s*行/u.exec(line)
+      const attachedExact = /`src\/index\.ts`[^|]{0,40}?([0-9][0-9,]{2,})\s*行/u.exec(line)
+      const attached = attachedExact
+      if (attachedApprox !== null) {
+        ok(`ARCHITECTURE L${index + 1} 现状行是估算（${attachedApprox[1].trim()} ${attachedApprox[2]} 行），不参与断言`)
+      } else if (attached !== null) {
+        const value = Number(attached[1].replace(/,/gu, ''))
+        if (value === actualLinesForArch) ok(`ARCHITECTURE L${index + 1} 现状行数 ${attached[1]} 行 与实测一致`)
+        else fail(`ARCHITECTURE L${index + 1} 现状写 ${attached[1]} 行，实测 ${actualLinesForArch}（wc -l）`)
+      } else if (attached !== null) {
+        ok(`ARCHITECTURE L${index + 1} 现状行是估算/目标（约 N 行），不参与断言`)
+      } else {
+        ok(`ARCHITECTURE L${index + 1} 现状行只描述其他文件的规模，无 src/index.ts 声明`)
+      }
+    } else if (BUDGET_MARKER.test(line)) {
+      // A target, not an assertion — nothing to verify and nothing to date.
+      ok(`ARCHITECTURE L${index + 1} 预算/目标类数字（不参与断言）`)
+    } else if (!dated) {
+      fail(
+        `ARCHITECTURE L${index + 1} 有数字但既无「现状」也无时点限定（vX.Y / 当时 / historical）：` +
+          `${numbers[0].raw} —— 要么标时点，要么标现状`,
+      )
+    }
+  }
+  if (!failures.some((entry) => entry.startsWith('ARCHITECTURE'))) {
+    ok('ARCHITECTURE.md 的每个数字都有 现状 或时点限定')
+  }
+}
+
+// ── FACT 5: the FOUR COPIES of this script must not diverge ──────────────────
+/**
+ * This file is duplicated across four repositories on purpose (they must each run standalone, with no
+ * cross-repo import). Duplication without a check drifts: one repo gets a rule the others lack, and the
+ * gate that is supposed to catch stale documentation becomes itself inconsistent.
+ *
+ * So each copy hashes the others and compares. A MISSING sibling is reported, not silently accepted —
+ * but a single-repo checkout (a published tarball, a CI job that cloned one repo) legitimately has no
+ * siblings, and that case prints why it skipped.
+ */
+{
+  const SELF = new URL(import.meta.url)
+  const repoRoot = new URL('..', SELF)
+  const selfBytes = readFileSync(new URL('./scripts/check-readme-counts.mjs', repoRoot))
+  const selfHash = createHash('sha256').update(selfBytes).digest('hex')
+
+  const siblings = ['dsh-paradise', 'dsh-memory', 'dsh-graft-slice', 'dsh-observer']
+  const workspaceRoot = new URL('../', repoRoot)
+  const present = []
+  const differing = []
+  let anyPresent = false
+
+  for (const name of siblings) {
+    const candidate = new URL(`${name}/scripts/check-readme-counts.mjs`, workspaceRoot)
+    let bytes
+    try {
+      bytes = readFileSync(candidate)
+    } catch {
+      continue
+    }
+    anyPresent = true
+    present.push(name)
+    const hash = createHash('sha256').update(bytes).digest('hex')
+    if (hash !== selfHash) differing.push(`${name} (${hash.slice(0, 12)} ≠ ${selfHash.slice(0, 12)})`)
+  }
+
+  if (!anyPresent) {
+    ok('单仓环境，跳过跨仓一致性（找不到同工作区的 dsh-*/scripts/check-readme-counts.mjs）')
+  } else if (differing.length > 0) {
+    fail(`check-readme-counts.mjs 四份副本已分叉：${differing.join(', ')}`)
+  } else {
+    ok(`check-readme-counts.mjs 与 ${present.length} 份同工作区副本一致（${selfHash.slice(0, 12)}）`)
   }
 }
 

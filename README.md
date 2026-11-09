@@ -390,7 +390,7 @@ rendered: [{ id, requested: 'visible', rendered: true, reason: '…' }]
 | 宿主 `ToolAdapter` | ✅ 超时、错误即结果、按被调方法解析 |
 | **租约**（Epoch + fencing） | ✅ 一份宿主中立的实现（`lease-adapter.ts`），两个宿主共用；`withLease` 有界等待、必释放、陈旧检测 |
 | **graft-slice 改用适配器** | ✅ 已完成（create / 冷读校验 / 回滚 / trigger 全走此层） |
-| **observer 改用适配器** | ✅ 已完成（`observer-inject.ts` 保留为存档，不再被引用） |
+| **observer 改用适配器** | ✅ 写路径已完成（走 `paradise.session`）。`observer-inject.ts` 保留为存档，但**仍被 4 个只读助手 import**（`InjectError` / `resolveInheritedCwdAsync` / `resolveService` / `shortSessionTag`）；彻底移出是下一次清理。 |
 | **memory 改用适配器** | ⛔ 未开始，且**需要一次范围裁决**：`SKILL.md` 是用户级可编辑文件树，键值存储表达不了（memory 的**锁**已改用本层租约，见 v0.30） |
 | **能力降级断言（升级预演）** | ✅ `assert-capabilities.ts`：缺 API 时 `HOST_CAPABILITY_MISSING`，逐条给出**后果**与**要改哪个文件**；`strict` 开关供升级预演使用（默认宽松，以保留「空宿主如实报 false」这一性质） |
 
@@ -424,7 +424,7 @@ createDshAdapters(mountedCtx).session.capabilities.create            // true  �
 node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.mjs
 ```
 
-**当前 104/104。** preflight 14 项，其中三项是这一层独有：
+**当前 354/354。** preflight 14 项，其中三项是这一层独有：
 
 - 产物里的**协议区不含宿主名**（源码干净 ≠ 打包后干净）；
 - 两条拒绝路径仍然存在（`NOT_IMPLEMENTED` 与 `NOT_WIRED`）；

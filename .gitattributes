@@ -1,0 +1,18 @@
+# 行尾与编码统一（B-2）
+#
+# WHY: 2026-11-09 的审计发现 graft 的 README 在文本层面出现 CRLF/LF 并存的报道。当前实测四份 README
+# 均为纯 LF、无 BOM（`readFileSync(p,'utf8')` 下 CRLF=0），但这不靠「目前恰好如此」——用 .gitattributes
+# 上锁，谁在什么编辑器里保存都不会再漂。
+#
+# 另一条更重要的口径：中文环境下的 `Get-Content` 会把 UTF-8 当 ANSI(936) 解码，多字节序列被误判导致
+# 行合并（实测 549 行的纯 LF 文件报成 364 行）。因此**读取 .md/.ts/.json 一律用 readFileSync(p,'utf8')
+# 或 ReadAllLines()，禁止裸 Get-Content**。判据：(Get-Content $f).Count ≠ (ReadAllLines $f).Length
+# ⇒ 读取方式错了，不是文件错了。
+* text=auto eol=lf
+*.md  text eol=lf
+*.ts  text eol=lf
+*.mjs text eol=lf
+*.js  text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

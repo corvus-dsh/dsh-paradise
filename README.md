@@ -18,10 +18,26 @@
 <!-- INSTALL:BEGIN -->
 ## 安装
 
-> 所有四个包都**没有发布到 npm**，且 npm 上的裸名 `dsh-memory` / `dsh-observer` 已被他人占用。
-> 因此统一使用 **GitHub 直装**——这是目前唯一可靠的安装方式。
+两条路都可用。**按你需要选一条**，不要混装同一插件。
 
-## 一键安装四个包
+## 路线 A：npm registry（beta 通道）
+
+四个包都发布在 `@corvus-dsh/*` 作用域下，当前通道是 **beta**：
+
+```bash
+dsh plugin add @corvus-dsh/dsh-paradise@beta
+dsh plugin add @corvus-dsh/dsh-memory@beta
+dsh plugin add @corvus-dsh/dsh-graft-slice@beta
+dsh plugin add @corvus-dsh/dsh-observer@beta
+```
+
+先确认 registry 上是哪一版：
+
+```bash
+npm view @corvus-dsh/dsh-paradise@beta version
+```
+
+## 路线 B：GitHub 直装
 
 ```bash
 dsh plugin add github:corvus-dsh/dsh-paradise
@@ -30,11 +46,15 @@ dsh plugin add github:corvus-dsh/dsh-graft-slice
 dsh plugin add github:corvus-dsh/dsh-observer
 ```
 
-**顺序有意义**：`dsh-paradise` 是内核，其余三个都依赖它提供的协议。先装内核，后装业务插件。
+## 两条路的区别（选之前先读这三行）
 
-> **装完之后的自修复能力，取决于你是否填入自己的凭据**（见文首表格）：
-> - **不填** → 装好的只是一个适配层：能检测、能降级、能记录，不会自动拉起会话修复。
-> - **填入你自己的 API Key** → 才具备「检测到宿主崩溃 → 自动拉起维修会话 → 修复 → 重启宿主 → 验证回来」这条链路。**仍是测试功能，请先演练。**
+| | registry（路线 A） | GitHub 直装（路线 B） |
+|---|---|---|
+| 拿到的是什么 | **已发布、已固化**的产物 | **仓库当前状态**（可能含未发布提交） |
+| 复现某版本 | 可以：`@corvus-dsh/dsh-paradise@0.9.1-beta.1` | 不可以（要 checkout 对应 tag 再装） |
+| 适合 | 部署、回归、报 bug 时给出确切版本 | 跟进最新修复、本地开发 |
+
+**顺序有意义**：`dsh-paradise` 是内核，其余三个都依赖它提供的协议。先装内核，后装业务插件。
 
 ## 装完确认
 
@@ -83,15 +103,11 @@ node dist/harness-server.js
 | DSH | ≥ 0.2.1-rc.5 |
 | 外部依赖 | **零**。全部只用 Node 内置模块 |
 
-## 为什么不用 npm
+## 为什么包名带作用域
 
-npm 上的 `dsh-memory` 和 `dsh-observer` 这两个名字已被第三方注册，包内容与我们无关。
-我们不愿为一个名字支付赎金，也不愿让用户装到别人的包，所以改用了作用域命名
-（`@corvus-dsh/*`）并主推 GitHub 直装。
-
-等 `@corvus-dsh` 作用域下的包正式发版后，`npm install @corvus-dsh/dsh-memory`
-也会可用，但**GitHub 直装始终是更稳妥的方式**——它直接取仓库当前状态，
-不经过 npm 的发布延迟。
+npm 上的**裸名** `dsh-memory` 和 `dsh-observer` 已被第三方注册，包内容与我们无关。
+我们不愿为一个名字支付赎金，也不愿让用户装到别人的包，所以改用作用域命名
+（`@corvus-dsh/*`）——**请始终用带作用域的名字**，裸名指向的不是本项目的包。
 <!-- INSTALL:END -->
 
 <!-- HOST:GUIDE:BEGIN -->

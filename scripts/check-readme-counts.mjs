@@ -178,38 +178,69 @@ if (actualTests !== undefined) {
    * version tag). The audit's defect was a CURRENT claim that was wrong, not an old one that stayed.
    */
   /**
-   * WHICH COUNT IS "OURS"? — the simple rule, after three complicated ones failed.
+   * WHICH COUNT IS "OURS"? — and now: which of ours are ALL checked.
    *
-   * A line can carry several counts (`| graft **591/591**、memory **415/415** |`). Deciding ownership by
-   * proximity to a repository name was tried and was wrong three times: the name may be implicit, the
-   * offset basis may differ, the line may be a table row. Complexity in a gate is not thoroughness —
-   * it is a place for a false failure to hide, and a false failure on a correct number is how a gate
-   * ends up disabled.
+   * THE BACKDOOR THIS CLOSES (measured twice, by the gate's own author). The previous rule took the
+   * FIRST self-equal `N/N` pair per line and checked only that one. So a README could say 604 in the
+   * status table at the top and 598 in the body further down, and the gate was green — because the
+   * body line's claim was never compared. That is exactly what happened in this repository
+   * (`README.md:808` and `:1475` still said 598 while `:416` said 604), and the same shape recurred in
+   * `dsh-memory` (415 in two places).
    *
-   * THE RULE NOW: per line, take the FIRST self-equal `N/N` pair that is NOT marked historical, and
-   * require it to equal the measured count. One claim per line, decided the same way every time.
+   * A gate with a "fix one occurrence and you pass" shape does not check a document; it checks one
+   * line of it. EVERY self-equal pair must now be accounted for.
    *
-   * `graft **591/591**、memory **415/415**` in THIS repository's README: the first pair is 591 (ours),
-   * so the line passes — and if someone edits 591 to 500, the gate fails. The second pair is another
-   * repository's number and is not this gate's business.
+   * THE ONE REAL COMPLICATION, from data rather than imagination: some lines carry another
+   * repository's count — `| graft **604/604**、memory **418/418** |`. Requiring both to equal THIS
+   * repository's count would be a false failure, and a false failure is how a gate gets switched off.
+   * So ownership is decided by the NEAREST repository word BEFORE the pair on that line:
+   *
+   *   - a word naming this repository (its short name, e.g. `graft` for `dsh-graft-slice`) → OURS;
+   *   - a word naming a DIFFERENT repository → not ours, skipped;
+   *   - no word at all → OURS. An unqualified `418 / 418` in this repository's README is a claim
+   *     about this repository; there is nothing else it could mean.
+   *
+   * Proximity was tried before and reverted because it was used to decide *whether* a number was a
+   * claim at all. It is used here only to attribute a claim that is already established — the pair
+   * must still be self-equal and unmarked historical. Both directions are tested in
+   * `test/v094-gate-selfclaims.test.mjs`, including the "top correct, body wrong" README that used to
+   * pass.
    */
+  const SHORT_NAMES = { 'dsh-graft-slice': 'graft', 'dsh-memory': 'memory', 'dsh-paradise': 'paradise', 'dsh-observer': 'observer' }
+  const REPO_WORDS = ['graft', 'memory', 'paradise', 'observer']
+  const ours = SHORT_NAMES[pkg.name?.replace(/^@[^/]+\//u, '')] ?? undefined
   const lines = readme.split(/\r?\n/u)
   const claims = []
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]
     if (/historical|重构时|当时|v\d+\.\d+\s*起|历史/u.test(line)) continue
-    const match = /(\d{3,4})\s*\/\s*(\d{3,4})/u.exec(line)
-    if (match === null) continue
-    if (Number(match[1]) !== Number(match[2])) continue
-    claims.push({ left: Number(match[1]), raw: match[0], lineNumber: index + 1 })
+    for (const match of line.matchAll(/(\d{3,4})\s*\/\s*(\d{3,4})/gu)) {
+      if (Number(match[1]) !== Number(match[2])) continue
+      // Attribute by the nearest repository word BEFORE this pair on the line.
+      const before = line.slice(0, match.index)
+      const named = [...before.matchAll(new RegExp(`\\b(${REPO_WORDS.join('|')})\\b`, 'gu'))]
+      const nearest = named.length > 0 ? named[named.length - 1][1] : undefined
+      const isOurs = nearest === undefined || ours === undefined || nearest === ours
+      claims.push({ left: Number(match[1]), raw: match[0], lineNumber: index + 1, nearest, isOurs })
+    }
   }
 
-  if (claims.length === 0) {
+  const mine = claims.filter((claim) => claim.isOurs)
+  const foreign = claims.filter((claim) => !claim.isOurs)
+  if (mine.length === 0) {
     ok(`README 未声明当前测试数（实测 ${expected}），无断言可做`)
   } else {
-    for (const claim of claims) {
+    for (const claim of mine) {
       if (claim.left === expected) ok(`L${claim.lineNumber} 测试数 ${claim.raw} 与实测一致`)
       else fail(`L${claim.lineNumber} README 声明测试数 ${claim.raw}，实测 ${expected}`)
+    }
+    // Say out loud how many were skipped, so "0 failures" cannot hide "0 comparisons".
+    if (foreign.length > 0) {
+      ok(
+        `${foreign.length} 处自等 N/N 属于其他仓，不参与本仓断言（L${[
+          ...new Set(foreign.map((claim) => claim.lineNumber)),
+        ].join(', L')}）`,
+      )
     }
   }
 }

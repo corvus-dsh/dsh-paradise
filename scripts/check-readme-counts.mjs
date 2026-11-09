@@ -45,8 +45,22 @@
  *   4. **Prose.** "已完成" / "稳定" / "支持 X" are judgements. This gate reads numbers only.
  *   5. **Whether the suite is FLAKY.** It reports a red suite as red; it does not decide whether the
  *      cause is the code or the machine. (See dsh-paradise README 已知边界第 6 条 for the one known case.)
- *   6. **Encoding.** A file full of GBK-decoded artifacts (鈥 / 鈫) has no wrong NUMBER, so this gate is
- *      blind to it. That defect was found by eye on 2026-11-09 and fixed by hand.
+ *   6. **Encoding.** A file full of GBK-decoded artifacts (鈥 / 鈫 / 鈹 / 瑙) has no wrong NUMBER, so this
+ *      gate is blind to it.
+ *
+ *      AND THIS GATE ALSO DOES NOT DECIDE WHETHER THOSE CHARACTERS MEAN A BROKEN FILE. On this project
+ *      that mistake was made FOUR times: three false alarms (observer README, graft README, publish.ts —
+ *      all clean under `readFileSync(…,'utf8')`) and ONE real corruption (graft README.en.md, 11 genuine
+ *      GBK artifacts). The discriminator is not the characters, it is the replacement marker:
+ *
+ *          见 到 鈥 / 鈫 / 鈹 / 瑙 这 类 字 符 时，先 判「文 件 坏 了」还 是「读 法 错 了」：
+ *            U+FFFD > 0                  → 文件真的坏了（字节已不可逆丢失）
+ *            U+FFFD = 0 但 字 符 仍 在    → 文件合法，是读取方按 ANSI(936) 解码的假象
+ *
+ *      Why that works: a real GBK↔UTF-8 double conversion destroys the byte sequence, so the decoder has
+ *      to substitute U+FFFD somewhere. A clean UTF-8 file read with the WRONG decoder produces 鈥-类
+ *      characters but no U+FFFD, because the wrong decoder is inventing them, not missing bytes. So the
+ *      marker tells you which side is at fault — the file, or the reader.
  *
  * ── COEXISTENCE ────────────────────────────────────────────────────────────────────────────────
  *

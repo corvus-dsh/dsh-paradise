@@ -23,9 +23,30 @@
  *
  *   FACT 1  the declared test count equals `node --test`'s pass count;
  *   FACT 2  a declared current version equals package.json's version;
- *   FACT 3  a declared `src/index.ts` line count equals the file's `wc -l`.
+ *   FACT 3  a declared `src/index.ts` line count equals the file's `wc -l`;
+ *   FACT 4  ARCHITECTURE.md: `现状` numbers match; an undated number is refused;
+ *   FACT 5  the four copies of this script in the workspace have not diverged;
+ *   FACT 6  README.en.md (when present): no UNDATED CURRENT claim (it is a frozen translation).
  *
- * It does not check prose: "已完成" is a judgement, "415 / 415" is a fact.
+ * ── WHAT IT DOES NOT CHECK — stated, because a gate that looks like it guards everything is more
+ *    dangerous than one that says what it guards ─────────────────────────────────────────────────
+ *
+ *   1. **Other files' sizes.** Only the number attached to `src/index.ts` is verified. `host-shape.ts
+ *      （996 行）`, `core/stores.ts（≤ 800 行）` and similar are NOT checked: they are other artifacts,
+ *      and a design document legitimately tracks several at once. Today most are additionally exempted
+ *      by `约` / `≤` markers, which means removing those markers would ALSO not turn this gate red —
+ *      that is the honest limit, not a hidden behaviour.
+ *   2. **README.en.md's historical numbers.** It is a frozen translation; only an UNDATED current claim
+ *      is refused (the shape that was wrong on 2026-11-09: "the current suite is 95"). A figure inside a
+ *      `historical` / `vX.Y` frame is left alone.
+ *   3. **RELEASE_NOTES*.md, REPORT-*.md, POSTMORTEM-*.md, ANALYSIS-BRIEF.md, FIX-REPORT-*.md** and every
+ *      other dated document. History is allowed to be old; checking them would force rewriting records
+ *      whose purpose is to say what was true then.
+ *   4. **Prose.** "已完成" / "稳定" / "支持 X" are judgements. This gate reads numbers only.
+ *   5. **Whether the suite is FLAKY.** It reports a red suite as red; it does not decide whether the
+ *      cause is the code or the machine. (See dsh-paradise README 已知边界第 6 条 for the one known case.)
+ *   6. **Encoding.** A file full of GBK-decoded artifacts (鈥 / 鈫) has no wrong NUMBER, so this gate is
+ *      blind to it. That defect was found by eye on 2026-11-09 and fixed by hand.
  *
  * ── COEXISTENCE ────────────────────────────────────────────────────────────────────────────────
  *
@@ -97,7 +118,8 @@ if (typeof script !== 'string') {
     actualTests = /pass (\d+)/u.exec(out)?.[1]
     const failedNow = Number(/fail (\d+)/u.exec(out)?.[1] ?? '0')
     if (failedNow > 0) {
-      const failing = [...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]).filter((name) => name !== 'failing tests:')
+      const failing = [...new Set([...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]))]
+        .filter((name) => name !== 'failing tests:' && !/^(test at|test)$/u.test(name))
       fail(
         `测试套件自身未全绿（${failedNow} 条失败：${failing.slice(0, 3).join(' / ') || '未解析出名称'}）。` +
           '本次不判定文档是否过期——先修测试，再谈计数。',
@@ -120,7 +142,8 @@ if (typeof script !== 'string') {
      * suite must be green for the count to mean anything. What is NOT claimed is that the number is
      * stale, because that conclusion is unsupported.
      */
-    const failing = [...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]).filter((name) => name !== 'failing tests:')
+    const failing = [...new Set([...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]))]
+      .filter((name) => name !== 'failing tests:' && !/^(test at|test)$/u.test(name))
     if ((/fail ([1-9]\d*)/u.exec(out)?.[1] ?? '0') !== '0') {
       fail(
         `测试套件自身未全绿（${failing.length} 条失败：${failing.slice(0, 3).join(' / ') || '未解析出名称'}）。` +
@@ -322,6 +345,41 @@ if (arch === undefined) {
   if (!failures.some((entry) => entry.startsWith('ARCHITECTURE'))) {
     ok('ARCHITECTURE.md 的每个数字都有 现状 或时点限定')
   }
+}
+
+// ── FACT 6: README.en.md — a frozen translation may not assert a CURRENT number ──────────────
+/**
+ * THE SHAPE THIS CATCHES (measured 2026-11-09): `43 tests passed  # v5.1 snapshot, historical — the
+ * current suite is 95`. The historical half is fine; "the current suite is 95" is a claim about TODAY
+ * inside a historical frame — the most dangerous combination there is, because a reader cannot tell
+ * which half to distrust. The real count was 591.
+ *
+ * README.en.md is a FROZEN TRANSLATION (its header says so), so the rule is narrower than for README.md:
+ * an English file may quote history freely, but a present-tense count must not appear.
+ */
+let englishReadme
+try {
+  englishReadme = read('README.en.md')
+} catch {
+  englishReadme = undefined
+}
+
+if (englishReadme === undefined) {
+  ok('本仓无 README.en.md，跳过英文文档断言')
+} else {
+  let found = 0
+  const lines = englishReadme.split(/\r?\n/u)
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const claim = /current(?:ly)?\s+(?:suite|count|total)?\s*(?:is\s+)?\d+|currently\s+\d+|现在\s*\d+|当前\s*\d+/iu.exec(line)
+    if (claim === null) continue
+    found += 1
+    fail(
+      `README.en.md L${index + 1} 断言了「现值」：${claim[0].trim()} —— 该文件是冻结译本，` +
+        '现值事实只放 README.md（或写成 historical / vX.Y 框内的历史数字）',
+    )
+  }
+  if (found === 0) ok('README.en.md 无现值数字断言（冻结译本口径）')
 }
 
 // ── FACT 5: the FOUR COPIES of this script must not diverge ──────────────────

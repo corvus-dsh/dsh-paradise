@@ -445,6 +445,21 @@ node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.
 5. **裸机模式不含宿主能力诊断。** `assertHostCapabilities` / `REQUIRED_HOST_CAPABILITIES`
    只从插件入口 `index.js` 导出，`dist/harness.js`（独立 CLI）里没有。也就是说
    "宿主升级导致插件加载失败"能诊断，但"宿主彻底起不来"时只能靠 CLI 的通用探针。
+6. **TD：自愈闭环的两条端到端用例不稳定（2026-11-09 登记，冻结期不修）。**
+   - **现象**：`test/v090-selfheal-loop.test.mjs` 的
+     `self-heal: a chatty model still closes the loop, and the host is restarted exactly once` 与
+     `self-heal: an unusable reply fails LOUDLY and names the text that was compiled` 偶发失败，
+     套件计数随之从 **354 掉到 353 / 352**。
+   - **实测频率（2026-11-09，本机）**：**单跑 10 次红 2 次**；此前并行跑全量时 6 次观察到 1 次。
+     两个数字都记下来，因为「只在并行时现」与「单跑也会红」指向完全不同的原因，而实测支持后者。
+   - **性质**：这两条是**真起子进程、真重启宿主、再查 pid 存活**的端到端用例，
+     涉及进程退出与端口占用的时序，不是纯函数断言。
+   - **为什么不修**：冻结期只做事实层收敛，改它属业务逻辑；且根因尚未定性
+     （子进程退出时序 / 端口复用 / 日志 watchdog 竞态都还没排除）。
+   - **复查方式**：单跑 10 次；若单跑稳定为 0 红，则说明是并行资源争用，只需降低并发；
+     若单跑仍红，才是代码时序问题，届时应改用「等待条件」而不是固定等待。
+   - **对闸门的影响**：`scripts/check-readme-counts.mjs` 在套件未全绿时**判红并列出失败用例**，
+     且**不**据此断定「文档过期」——否则一次 flaky 会报出假的文档错误，假红会让闸门被关掉。
 
 ### 下游插件：彼岸层已经完全接管（不再是"并存"）
 

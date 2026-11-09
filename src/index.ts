@@ -43,7 +43,7 @@ import { probeCapabilities } from './adapters/dsh/capability.js'
 import { service } from './adapters/dsh/services.js'
 import { ParadiseError, ParadiseUnavailableError, asParadiseError } from './errors.js'
 import { CARRYING_MESSAGE_RULE, UNIFIED_RULES, WRITE_LAYER_PHASE, writeNotImplemented } from './write/contract.js'
-import { PUBLISH_CAPABILITIES, publishNotImplemented } from './adapters/dsh/publish.js'
+import { PUBLISH_CAPABILITIES } from './adapters/dsh/publish.js'
 import { ProtocolError, bindHost, isParadiseHost } from './protocol/index.js'
 import { createDshAdapters, DSH_ADAPTER_NAME } from './adapters/dsh/index.js'
 import { deleteSession, verifyDeletion } from './adapters/dsh/delete.js'
@@ -285,7 +285,11 @@ export {
   WRITE_LAYER_PHASE,
   PUBLISH_CAPABILITIES,
   writeNotImplemented,
-  publishNotImplemented,
+  /**
+   * `publishNotImplemented` is NOT exported any more (批次 D, 2026-11-09). It threw `NOT_IMPLEMENTED`
+   * for a stage that is implemented inline in the write path (`session-writer.ts`, `stage = 'publish'`),
+   * and nothing called it — a thrower in the public surface advertising a state that did not exist.
+   */
   /* the removal machinery, for a plugin's own rollback */
   deleteSession,
   verifySessionDeletion,

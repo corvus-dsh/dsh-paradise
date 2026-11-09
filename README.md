@@ -384,13 +384,14 @@ rendered: [{ id, requested: 'visible', rendered: true, reason: '…' }]
 | 宿主 **`create`** | ✅ 事务式冷写入 + 冷读自校验 + 回滚 |
 | 宿主 **`trigger`** | ✅ 幂等 + 双模式回落 |
 | 宿主 **`probeDeletion`** | ✅ 三值答案（absent / present / unverifiable） |
+| **`publish`（工作区分组 + 客户端通告）** | ✅ 已接线（`session-writer.ts:419`），失败进 `warnings`。两步：`workspaceRegistry.resolveByPath` →（必要时 `create`）→ `attachSession`；然后 `ctx.emit('api-session/added', summary)`，且 emit 前过 `assertSessionSummary`（载荷不可解析则**跳过并上报**，不发脏载荷） |
 | 宿主 `inject`（**向已存在会话追加**） | ⛔ 未接线——本宿主的写是 create 时的一整份 tape；追加需要持久句柄增量写 |
 | 宿主 `injectIntoRunning` | ⛔ 同上，如实报 `false` |
 | 宿主 `StorageAdapter` | ✅ 原子写 + **快照**；半截 JSON **自恢复**（回退快照并就地修复）；`readDetailed` 区分 ok/missing/recovered/corrupt；`compareAndSet` 原子读改写 |
 | 宿主 `ToolAdapter` | ✅ 超时、错误即结果、按被调方法解析 |
 | **租约**（Epoch + fencing） | ✅ 一份宿主中立的实现（`lease-adapter.ts`），两个宿主共用；`withLease` 有界等待、必释放、陈旧检测 |
 | **graft-slice 改用适配器** | ✅ 已完成（create / 冷读校验 / 回滚 / trigger 全走此层） |
-| **observer 改用适配器** | ✅ 写路径已完成（走 `paradise.session`）。`observer-inject.ts` 保留为存档，但**仍被 4 个只读助手 import**（`InjectError` / `resolveInheritedCwdAsync` / `resolveService` / `shortSessionTag`）；彻底移出是下一次清理。 |
+| **observer 改用适配器** | ✅ 写路径已完成（走 `paradise.session`）。`observer-inject.ts` 已于 2026-11-09 删除，其中仍被使用的只读助手**已全部迁到该仓的 `src/core/read-helpers.ts`**（不计数——`grep '^export'` 是唯一准绳）；彻底移出已完成。 |
 | **memory 改用适配器** | ⛔ 未开始，且**需要一次范围裁决**：`SKILL.md` 是用户级可编辑文件树，键值存储表达不了（memory 的**锁**已改用本层租约，见 v0.30） |
 | **能力降级断言（升级预演）** | ✅ `assert-capabilities.ts`：缺 API 时 `HOST_CAPABILITY_MISSING`，逐条给出**后果**与**要改哪个文件**；`strict` 开关供升级预演使用（默认宽松，以保留「空宿主如实报 false」这一性质） |
 
@@ -465,7 +466,7 @@ node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.
 
 | 插件 | 现状 | 证据 |
 |---|---|---|
-| **`dsh-observer`** | ✅ **写路径完全切换**。孵化/点火/回滚必经本层（`paradise-write.ts` → `paradise.session.create` / `paradise.session.trigger` / `paradise.deleteSession`）。`observer-inject.ts` 仅作存档留在磁盘上，**生产代码零调用**；它仍被 import 的只有**只读辅助**（cwd 供体链、错误类型）与 `injectionInternals`（测试用的内存校验器）。 | observer 的 `manifest.json` 红线 `singleWritePath`；`scripts/preflight.mjs` 会**拒绝**任何 `await injectColdSession(` 调用；`test/paradise-bridge.test.mjs` |
+| **`dsh-observer`** | ✅ **写路径完全切换**。孵化/点火/回滚必经本层（`paradise-write.ts` → `paradise.session.create` / `paradise.session.trigger` / `paradise.deleteSession`）。原 `observer-inject.ts`（1,314 行）已于 2026-11-09 **删除**；其中仍被使用的只读助手**已全部迁到该仓的 `src/core/read-helpers.ts`**（不计数——`grep '^export'` 是唯一准绳）。 | observer 的 `manifest.json` 红线 `singleWritePath`；`scripts/preflight.mjs` 会**拒绝**任何 `await injectColdSession(` 调用；`test/paradise-bridge.test.mjs` |
 | **`dsh-graft-slice`** | ✅ **完全切换**。切片写入、冷读校验、回滚、点火全走本层适配器。 | graft 的 `src/core/paradise-write.ts`；`test/inject.test.mjs` |
 | **`dsh-memory`** | ⚠️ **部分**：**锁**已改用本层租约（v0.30），**存储**仍是自己的 SKILL.md 文件树（键值存储表达不了用户级可编辑文件树，这是一次刻意的范围裁决）。 | memory 的 `src/lease-bridge.ts`；`test/v030-lease-lock.test.mjs` |
 

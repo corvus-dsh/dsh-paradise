@@ -905,42 +905,68 @@ const UNIFIED_RULES                                                             
 ]
 
 /**
- * PUBLISH — workspace attachment and client announcement. **P2: contract only, not implemented.**
+ * PUBLISH — workspace attachment and client announcement. **IMPLEMENTED — this file is the CONTRACT,
+ * `session-writer.ts` is the implementation.**
  *
- * WHY THIS IS HOST-SPECIFIC AND THEREFORE LIVES HERE
+ * ── THE DEFECT THIS FILE USED TO CARRY (fixed 2026-11-09, 批次 D) ─────────────────────────────
+ *
+ * Its first line said "P2: contract only, not implemented", and it exported
+ * `publishNotImplemented()`, which threw `NOT_IMPLEMENTED`. Both were FALSE, and had been for a while:
+ * the real publishing runs inside `createColdSession` in `../dsh/session-writer.ts` (see
+ * `stage = 'publish'`, ~line 419) — resolve the workspace by path, create it when missing, attach the
+ * session, then `ctx.emit('api-session/added', summary)`, with every failure pushed into `warnings`.
+ * The old file was an orphan contract nobody called, describing an implementation that had moved on
+ * without it. A reader who trusted it would conclude the feature did not exist.
+ *
+ * ── WHY THIS IS HOST-SPECIFIC AND THEREFORE LIVES HERE ────────────────────────────────────────
  *
  * "Attach the session to a workspace group and tell the client it exists" is this runtime's idea of
  * appearing in a sidebar. A different harness may have no sidebar, no workspace registry, and no
  * announcement event. The protocol models the OUTCOME (`SessionRef` exists and is findable); how a
  * given host makes something findable is its own business.
  *
- * THE TWO STEPS, AND THEIR DIFFERENT SEVERITIES
+ * ── THE TWO STEPS, AND THEIR DIFFERENT SEVERITIES ─────────────────────────────────────────────
  *
  *   1. workspace registry resolve + attach — cosmetic grouping. A failure means "ungrouped", never
  *      "the artifact is invalid".
  *   2. client announcement — the client learns the session exists ONLY from this event on this host.
  *      A failure means the user must refresh to see it.
  *
- * Both must land in the receipt's `warnings`, never be swallowed, and never turn a good artifact into
- * a reported failure.
+ * Both land in the receipt's `warnings`, are never swallowed, and never turn a good artifact into a
+ * reported failure. Note the announcement is additionally guarded by `assertSessionSummary` (P1-3):
+ * an unresolvable payload is SKIPPED and reported rather than emitted, because a summary the peer
+ * cannot key by is silent on every side.
  */
 
-
-/** What the receipt must carry once this is implemented. */
+/**
+ * What the write receipt carries for the publishing stage.
+ *
+ * `WriteReceipt` in `../dsh/session-writer.ts` `extends` this interface, which is what makes the
+ * contract real rather than aspirational: if the writer stops reporting one of these fields, the type
+ * error appears in the writer, not months later in a consumer.
+ */
                                  
+                                                                                                     
              
+                                                                                                    
                             
+                                                                                               
                           
                                                                                      
                     
  
 
-/** The capability names this layer needs, as THIS host spells them. */
+/** The capability names this layer needs for publishing, as THIS host spells them. */
 const PUBLISH_CAPABILITIES = ['workspaceRegistry.resolveByPath', 'ctx.emit']         
 
-function publishNotImplemented()        {
-  return writeNotImplemented('publish(workspace/announce)')
-}
+/**
+ * The publishing stage is implemented; the old blocking helper is gone on purpose.
+ *
+ * KEPT AS A COMMENT, NOT AS CODE: `publishNotImplemented()` used to live here and threw
+ * `NOT_IMPLEMENTED`. It had no caller — the write path publishes inline — so leaving a thrower in the
+ * public surface advertised an unimplemented state that did not exist. `grep publishNotImplemented`
+ * is now empty in this repository, which is the acceptance condition the audit asked for.
+ */
 
 /**
  * PARADISE PROTOCOL — the host-neutral value types.
@@ -3358,8 +3384,16 @@ async function verifyDeletion(ctx     , sessionId        )                      
  * the slicing layer arrived at by catching real host regressions with it.
  */
 
-/** What the writer produced, with proof for every claim. */
-                                                       
+/**
+ * What the writer produced, with proof for every claim.
+ *
+ * `extends PublishReceipt` on purpose (批次 D, 2026-11-09): the publishing stage's contract used to sit
+ * in `./publish.ts` as a comment-only interface describing an implementation that had already moved
+ * here, so nothing connected the two. Now the connection is a TYPE: if the writer stops reporting
+ * `workspaceAttached` / `clientAnnounced` / `warnings`, the error appears at this interface instead of
+ * surfacing months later in a consumer that trusted the contract file.
+ */
+                                                                       
                       
                                                   
                           
@@ -3371,8 +3405,6 @@ async function verifyDeletion(ctx     , sessionId        )                      
                                                                         
                            
                            
-                            
-                          
  
 
                                 
@@ -14086,7 +14118,11 @@ export {
   WRITE_LAYER_PHASE,
   PUBLISH_CAPABILITIES,
   writeNotImplemented,
-  publishNotImplemented,
+  /**
+   * `publishNotImplemented` is NOT exported any more (批次 D, 2026-11-09). It threw `NOT_IMPLEMENTED`
+   * for a stage that is implemented inline in the write path (`session-writer.ts`, `stage = 'publish'`),
+   * and nothing called it — a thrower in the public surface advertising a state that did not exist.
+   */
   /* the removal machinery, for a plugin's own rollback */
   deleteSession,
   verifySessionDeletion,

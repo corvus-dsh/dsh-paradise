@@ -24,10 +24,11 @@ import {
   asParadiseError,
   isRenderedByConversation,
   probeCapabilities,
-  publishNotImplemented,
   resolveService,
   writeNotImplemented,
 } from '../index.js'
+/** The whole entry, for the surface assertions (a named import cannot ask "is this absent?"). */
+import * as paradiseEntry from '../index.js'
 
 /* ── rule 5: resolve by the method about to be called ────────────────────── */
 
@@ -164,8 +165,32 @@ test('P2 contract: an unimplemented write path THROWS instead of faking success'
   )
 })
 
-test('P2 contract: publishing is unimplemented too', () => {
-  assert.throws(() => publishNotImplemented(), (error) => error instanceof ParadiseError)
+/**
+ * ── 批次 D (2026-11-09): THIS TEST USED TO ASSERT A STATE THAT NO LONGER EXISTED ────────────────
+ *
+ * It read `assert.throws(() => publishNotImplemented())` and was titled "publishing is unimplemented
+ * too". That had been false for several releases: the real publishing runs inside the write path
+ * (`session-writer.ts`, `stage = 'publish'`) — workspace resolve/create/attach plus the
+ * `api-session/added` announcement, with failures collected in `warnings`. The assertion survived
+ * because it tested a helper nobody called: it certified nothing while reading like contract coverage.
+ *
+ * The replacement asserts what is TRUE and checkable without a mounted host: the publishing stage's
+ * contract is EXPRESSED AS A TYPE the write receipt extends, and the fake thrower is gone from the
+ * public surface. `write-lifecycle.test.mjs` and `caller-contract.test.mjs` cover the behaviour end to
+ * end against a real context.
+ */
+test('publish: the stage is implemented — its contract is the receipt type, not a thrower', () => {
+  const entry = Object.keys(paradiseEntry)
+  assert.equal(
+    entry.includes('publishNotImplemented'),
+    false,
+    'publishNotImplemented must NOT be exported: publishing is implemented inline in the write path, ' +
+      'and a thrower advertising the opposite is how readers conclude a feature does not exist',
+  )
+  assert.ok(
+    entry.includes('PUBLISH_CAPABILITIES'),
+    'the capability names stay exported: a caller must still be able to ask what publishing needs',
+  )
 })
 
 test('P2 contract: the seven unified rules are enumerable, so a cross-plugin test can walk them', () => {

@@ -29,10 +29,19 @@ import type { ContextItem, MutationReceipt, RenderedItem, SessionRef } from '../
 import { InjectShapeError, assertTape, buildTape, describeRendered, isAbsoluteCwd, materialiseTape } from './inject.js'
 import { deleteSession } from './delete.js'
 import { assertSessionSummary } from './policy.js'
+import type { PublishReceipt } from './publish.js'
 import { service } from './services.js'
 
-/** What the writer produced, with proof for every claim. */
-export interface WriteReceipt extends MutationReceipt {
+/**
+ * What the writer produced, with proof for every claim.
+ *
+ * `extends PublishReceipt` on purpose (批次 D, 2026-11-09): the publishing stage's contract used to sit
+ * in `./publish.ts` as a comment-only interface describing an implementation that had already moved
+ * here, so nothing connected the two. Now the connection is a TYPE: if the writer stops reporting
+ * `workspaceAttached` / `clientAnnounced` / `warnings`, the error appears at this interface instead of
+ * surfacing months later in a consumer that trusted the contract file.
+ */
+export interface WriteReceipt extends MutationReceipt, PublishReceipt {
   session?: SessionRef
   /** What was actually placed where, per item. */
   rendered: RenderedItem[]
@@ -44,8 +53,6 @@ export interface WriteReceipt extends MutationReceipt {
   /** Where the briefing landed, for a reader that wants to fetch it. */
   contentSeq: number | null
   contentSourceKind: string
-  workspaceAttached: boolean
-  clientAnnounced: boolean
 }
 
 export interface CreateOptions {

@@ -226,13 +226,40 @@ if (actualLines === undefined) {
    * file is treated as a claim about it — otherwise a README mentioning "5,000 行" of some other thing
    * would fail a gate it has nothing to do with.
    */
+  /**
+   * ── ONLY A COUNT THAT NAMES `src/index.ts` IS A CLAIM ABOUT ITS SIZE ──────────────────────────
+   *
+   * This rule has now been through FOUR versions, each corrected by a FALSE result — which is the
+   * argument for keeping a proof script next to it:
+   *
+   *   1. "any `N 行`" → compared `observer-inject.ts（1,314 行）` against this repo's `src/index.ts`;
+   *   2. "same thousands" → missed a fat-fingered 99,999 (different thousands, so ignored);
+   *   3. "attached to a backticked `src/index.ts`" → still let `（1,314 行）` through when the file was
+   *      named ELSEWHERE on a long table row (`原 observer-inject.ts（1,314 行）…`), because the sliding
+   *      window found the next number on the line;
+   *   4. THIS: the number must come from a `src/index.ts` mention **and** no other `.ts` filename may
+   *      sit between that mention and the number.
+   *
+   * A README legitimately quotes many file sizes. A gate that cannot tell them apart must not guess.
+   */
   const claims = [...readme.matchAll(/([0-9][0-9,]{2,})\s*行/gu)]
-    .map((match) => ({
-      value: Number(match[1].replace(/,/gu, '')),
-      raw: match[0],
-      line: readme.slice(readme.lastIndexOf('\n', match.index) + 1, readme.indexOf('\n', match.index)),
-    }))
-    .filter((claim) => Math.round(claim.value / 1000) === Math.round(actualLines / 1000))
+    .map((match) => {
+      const lineStart = readme.lastIndexOf('\n', match.index) + 1
+      const lineEnd = readme.indexOf('\n', match.index)
+      const line = readme.slice(lineStart, lineEnd === -1 ? undefined : lineEnd)
+      const ownAt = line.indexOf('src/index.ts')
+      const numberAt = match.index - lineStart
+      const between = ownAt === -1 ? '' : line.slice(ownAt + 'src/index.ts'.length, numberAt)
+      return {
+        value: Number(match[1].replace(/,/gu, '')),
+        raw: match[0],
+        line,
+        namesOurFile: ownAt !== -1 && numberAt > ownAt,
+        // Another `.ts` file named between ours and the number means the number is about THAT file.
+        otherFileInBetween: /[\w-]+\.ts/u.test(between),
+      }
+    })
+    .filter((claim) => claim.namesOurFile && !claim.otherFileInBetween)
     // Same historical exemption as the test count: a sentence about the v1.3 refactor quotes v1.3's
     // numbers on purpose, and "correcting" it would destroy the record it exists to keep.
     .filter((claim) => !/historical|重构时|当时|历史/u.test(claim.line))

@@ -87,6 +87,22 @@ const wcLines = (text) => {
   return text.endsWith('\n') ? parts.length - 1 : parts.length
 }
 
+/**
+ * ── 非空行, VERIFIED BECAUSE IT IS CLAIMED (N6b) ─────────────────────────────────────────────────
+ *
+ * The 口径 comment above defines BOTH numbers, and TD-1's 现状 row prints both:
+ *
+ *     `src/index.ts` 12,722 行 / 12,264 非空
+ *
+ * Measured: the non-empty value was **12,259** — off by five, on a line whose other number was being
+ * checked on every run. A reader who sees `行 / 非空` beside a verified `wc -l` has every reason to
+ * assume both are verified; nothing said otherwise, which is the same "no gate ⇒ it rots" failure this
+ * gate exists to prevent — committed by this gate's own subject line.
+ *
+ * So the rule is now: if a 现状 claim names `src/index.ts … N 行 / M 非空`, BOTH are compared.
+ */
+const nonEmptyLines = (text) => text.split(/\r?\n/u).filter((line) => line.trim().length > 0).length
+
 const readme = read('README.md')
 const pkg = JSON.parse(read('package.json'))
 
@@ -359,6 +375,13 @@ if (arch === undefined) {
       return undefined
     }
   })()
+  const actualNonEmptyForArch = (() => {
+    try {
+      return nonEmptyLines(read('src/index.ts'))
+    } catch {
+      return undefined
+    }
+  })()
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]
@@ -399,6 +422,23 @@ if (arch === undefined) {
         const value = Number(attached[1].replace(/,/gu, ''))
         if (value === actualLinesForArch) ok(`ARCHITECTURE L${index + 1} 现状行数 ${attached[1]} 行 与实测一致`)
         else fail(`ARCHITECTURE L${index + 1} 现状写 ${attached[1]} 行，实测 ${actualLinesForArch}（wc -l）`)
+
+        /**
+         * ── THE NON-EMPTY HALF OF THE SAME CLAIM ────────────────────────────────────────────────
+         *
+         * `… 12,722 行 / 12,264 非空` printed two numbers; only the first was checked. Measured: the
+         * second was wrong by five. If a claim prints it, it is asserted here — otherwise the 口径
+         * note that DEFINES 非空行 reads as documentation for something nobody verifies.
+         */
+        const nonEmptyAt = /\/\s*([0-9][0-9,]{2,})\s*非空/u.exec(line)
+        if (nonEmptyAt !== null) {
+          const claimedNonEmpty = Number(nonEmptyAt[1].replace(/,/gu, ''))
+          if (claimedNonEmpty === actualNonEmptyForArch) {
+            ok(`ARCHITECTURE L${index + 1} 现状非空 ${nonEmptyAt[1]} 与实测一致`)
+          } else {
+            fail(`ARCHITECTURE L${index + 1} 现状写 ${nonEmptyAt[1]} 非空，实测 ${actualNonEmptyForArch}`)
+          }
+        }
       } else if (attached !== null) {
         ok(`ARCHITECTURE L${index + 1} 现状行是估算/目标（约 N 行），不参与断言`)
       } else {

@@ -425,7 +425,7 @@ createDshAdapters(mountedCtx).session.capabilities.create            // true  �
 node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.mjs
 ```
 
-**当前 354/354。** preflight 14 项，其中三项是这一层独有：
+**当前 375/375。** preflight 14 项，其中三项是这一层独有：
 
 - 产物里的**协议区不含宿主名**（源码干净 ≠ 打包后干净）；
 - 两条拒绝路径仍然存在（`NOT_IMPLEMENTED` 与 `NOT_WIRED`）；
@@ -439,10 +439,21 @@ node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.
 1. **路径推导依赖未被承诺的目录布局。** 已标成 `derived:`，失效方式是"读文件失败"，不会伪造成功。
 2. **`RENDERED_CONVERSATION_TYPES` 是实测常量**（住在 `adapters/dsh/policy.ts`），只用于**报告**。
 3. **`inject` 只覆盖 create 时放置**。向已存在会话追加是另一条路径（打开持久句柄写 step-scoped 事件），未接线且如实报告。
-4. **沙箱的 fs 白名单不是安全边界。** `within()` 只做词法规范化（`path.resolve`），
-   **不解析符号链接 / Windows 目录联接**——沙箱根内若存在一个指向外部的 junction，
-   白名单可以被绕过。需要真正隔离请用 `node --permission` / 容器 / seccomp。
-   这条一直写在 `sandbox.ts` 的注释里，现在也写进 README，因为它是用户该知道的事。
+4. **沙箱的 fs 白名单不是安全边界。** 而且原因是具体的：**白名单有两个版本，强度不同。**
+
+   - **worker 内的 `within()`**（`adapters/raw/sandbox.ts`，沙箱实际执行时用的那一个）
+     经 `realish()` 走 `fs.realpathSync`，**会解析符号链接与 Windows 目录联接**。
+     沙箱根内的一个 junction 指向外部时，它**拒绝**——这条路**不可**绕过。
+   - **导出的 `isWithinRoots()`**（同文件，`readWithin()` / `listWithin()` 用的那一个）
+     只做 `resolve()` + `startsWith`，**纯词法，不解析链接**。
+     同一个 junction 在这里**被判为「在根内」**，内容会被读出——这条路**可以**绕过。
+
+   所以「沙箱不是安全边界」这句话仍然成立，但**成立的原因是导出件那一份弱**，
+   而不是「全仓都不解析链接」。早先此处写的是「`within()` 只做词法规范化」，
+   那句话对一半：确实有一个只做词法规范化的实现，但**它不是 worker 执行时用的那一个**。
+   已按实测订正（2026-11-16，见 graft 仓 `ARCHITECTURE.md` 的 TD-23 登记）。
+
+   需要真正隔离请用 `node --permission` / 容器 / seccomp。
 5. **裸机模式不含宿主能力诊断。** `assertHostCapabilities` / `REQUIRED_HOST_CAPABILITIES`
    只从插件入口 `index.js` 导出，`dist/harness.js`（独立 CLI）里没有。也就是说
    "宿主升级导致插件加载失败"能诊断，但"宿主彻底起不来"时只能靠 CLI 的通用探针。

@@ -103,3 +103,27 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # ── THE ARCHITECTURAL GATES THAT DID NOT EXIST HERE UNTIL 2026-11-16 ────────────────────────
+      #
+      # Measured before this change: this repository had 54 `.ts` files / 15,869 lines / 403 top-level
+      # declarations and **zero architectural gates**. `preflight` (14 checks, three of them unique to
+      # this layer) was the only thing running, and it answers "can the artifact be loaded", not
+      # "is the dependency graph sound" or "did documentation drift".
+      #
+      # The three scripts below are byte-identical copies of dsh-memory's (verified by SHA-256 in
+      # `报告/B0-验收.md`): they take the source root from the repo itself, so their being copied
+      # rather than adapted is the point — four repositories, one implementation per criterion.
+      #
+      # Order: cycles (a structural CAUSE) before documentation counts (a SYMPTOM), same reasoning as
+      # graft-slice and observer.
+      - name: Gates (new: cycles / type budget / readme counts)
+        # `type-budget` exits 2 when no compiler is present. This package declares no dependencies, so
+        # on the runner it usually WILL be 2 — which is a RESOURCE condition, not a pass, and the
+        # wrapper prints exactly that and exits 0. On a machine that has a compiler it enforces the
+        # frozen baseline (58 code diagnostics, measured 2026-11-16). See docs/gate-wiring.md.
+        run: |
+          node scripts/check-cycles.mjs
+          node scripts/run-gate.mjs scripts/type-budget.mjs
+          node scripts/check-readme-counts.mjs
+

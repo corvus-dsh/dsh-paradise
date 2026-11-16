@@ -1,0 +1,32 @@
+{
+  "_provenance": {
+    "measuredAt": "2026-11-16",
+    "measuredBy": "B0 派工单（报告/B0-派工单.md 第七、八节）",
+    "corpus": "227 个真实日志、5,967 条 user/message",
+    "method": "扫 source.kind，按出现次数聚合",
+    "note": "本夹具是 B1.1 content-classifier 的输入。**样本文本由 B0 按 kind 的语义构造，不是从语料原文抄的** —— 原文受会话内容隐私约束，且 B1.1 需要的是「每种 kind 的最小可识别形态」而不是真实语料片段。observedCount 才是实测值，逐字来自上面的统计。",
+    "whyCountsAreFrozen": "计数会随时间增长（新会话持续产生）。夹具钉住的是**那一刻的分布快照**，用于证明「19 种都见过」；如果未来某次重扫出现第 20 种，应当更新本文件并在此处记一行 —— 见测试里「新 kind 出现会怎样」那一节。"
+  },
+  "totalObserved": 5967,
+  "kinds": [
+    { "kind": "user", "observedCount": 2224, "sampleText": "把这个仓库的测试跑一遍，失败的列出来。" },
+    { "kind": "time-context", "observedCount": 1715, "sampleText": "当前时间：2026-11-16T18:00:00+08:00（Asia/Shanghai）" },
+    { "kind": "plugin:graft-replay", "observedCount": 615, "sampleText": "[graft-replay] 以下内容从会话 A 的 seq=42 处搬运而来，用于重建上下文。" },
+    { "kind": "runtime-context", "observedCount": 338, "sampleText": "当前工作目录：D:\\workspace\\proj\n系统：win32 x64" },
+    { "kind": "subagent-settled", "observedCount": 276, "sampleText": "子智能体 dsh3 已完成，结果：三仓 can-red 全部通过。" },
+    { "kind": "agent-message", "observedCount": 227, "sampleText": "我已定位到问题：gate 脚本没有检查退出码。" },
+    { "kind": "skill-catalog", "observedCount": 208, "sampleText": "可用技能：cold-tape-materialize-slice / office-docx / official-plugins" },
+    { "kind": "model-selection", "observedCount": 153, "sampleText": "模型已切换：deepseek-v4.1-flash（reasoning: medium）" },
+    { "kind": "tool-jobs", "observedCount": 89, "sampleText": "后台任务 pwsh-3bb9a29c 已完成，exit code 0。" },
+    { "kind": "user-approval", "observedCount": 27, "sampleText": "已批准：允许执行该命令。" },
+    { "kind": "agent-instructions", "observedCount": 25, "sampleText": "你是 DSH-3。工作目录限定为 workspace，不得递归搜索用户目录。" },
+    { "kind": "plugin:dsh-memory", "observedCount": 22, "sampleText": "[dsh-memory] 检索到 3 条相关技能，已按鲜活度排序。" },
+    { "kind": "goal", "observedCount": 19, "sampleText": "目标：把四仓的 can-red 补齐并出一份验收报告。" },
+    { "kind": "compact-checkpoint", "observedCount": 11, "sampleText": "[compact] 较早的 42 轮已摘要，最近 6 轮保留原文。" },
+    { "kind": "repeat-tool-reminder", "observedCount": 5, "sampleText": "你已经连续 3 次用同一个工具读同一个文件，考虑换一种做法。" },
+    { "kind": "plugin:chat-import", "observedCount": 4, "sampleText": "[chat-import] 已从 codex 导入 128 轮对话。" },
+    { "kind": "working-directory", "observedCount": 4, "sampleText": "工作目录已变更为 D:\\workspace\\proj" },
+    { "kind": "tool-goal", "observedCount": 4, "sampleText": "todo_write：阶段 2 完成，进入阶段 3。" },
+    { "kind": "plugin:observer-briefing", "observedCount": 1, "sampleText": "[observer-briefing] 主脑已完成阶段 2，副脑开始观察。" }
+  ]
+}

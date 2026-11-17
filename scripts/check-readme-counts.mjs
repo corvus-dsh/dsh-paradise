@@ -535,48 +535,81 @@ if (englishReadme === undefined) {
   if (found === 0) ok('README.en.md 无现值数字断言（冻结译本口径）')
 }
 
-// ── FACT 5: the FOUR COPIES of this script must not diverge ──────────────────
+// ── FACT 5: every file that CLAIMS to be identical across the four repos ─────
 /**
- * This file is duplicated across four repositories on purpose (they must each run standalone, with no
- * cross-repo import). Duplication without a check drifts: one repo gets a rule the others lack, and the
- * gate that is supposed to catch stale documentation becomes itself inconsistent.
+ * This script is duplicated across four repositories on purpose (each must run standalone, with no
+ * cross-repo import). Duplication without a check drifts: one repo gets a rule the others lack, and
+ * the gate that is supposed to catch stale documentation becomes itself inconsistent.
  *
- * So each copy hashes the others and compares. A MISSING sibling is reported, not silently accepted —
- * but a single-repo checkout (a published tarball, a CI job that cloned one repo) legitimately has no
- * siblings, and that case prints why it skipped.
+ * ── WHY A LIST AND NOT JUST THIS FILE ───────────────────────────────────────────────────────────
+ *
+ * `run-gate.mjs` guards itself with its own `--check-copies`. Anything else that claims to be the
+ * same file in four repositories has to be listed here — otherwise the claim is only a comment.
+ * Measured 2026-11-17: `test/run-gate-resource.test.mjs` says "THE SAME FILE IN FOUR REPOSITORIES,
+ * ON PURPOSE" in its own header, and existed in TWO versions (239 lines with a shallow-clone
+ * fallback in `dsh-memory`, 177 without it in the other three). Nothing compared them, and
+ * `dsh-observer`'s CI went red on the stale copy (run 44014143688, `Test` step).
+ *
+ * ── WHY CI DEGRADES THIS TO A NOTE, AND A DEV MACHINE DOES NOT ──────────────────────────────────
+ *
+ * This check compares SELF against each sibling IT CAN SEE. On CI those siblings are separate
+ * checkouts at their DEFAULT BRANCH — whatever was last pushed — not at this commit. So on CI a
+ * difference usually means "a sibling has not been pushed yet": a fact about ordering, not about
+ * divergence. Asserting it red makes every push depend on the push order of the other repositories
+ * (measured 2026-11-17: four CI rounds spent on exactly that).
+ *
+ * Locally, all four repos sit in one workspace at the same commit, so a difference IS a real
+ * divergence and must fail — and `npm run check` is what a developer runs before committing.
+ *
+ * The CI form still PRINTS the difference and says why it is not asserted. A note that reads
+ * "everything is consistent" when it is not would be the silent-mismatch failure this repository
+ * keeps recording; this says the opposite, out loud.
  */
+const IDENTICAL_ACROSS_REPOS = [
+  'scripts/check-readme-counts.mjs',
+  'test/run-gate-resource.test.mjs',
+]
 {
-  const SELF = new URL(import.meta.url)
-  const repoRoot = new URL('..', SELF)
-  const selfBytes = readFileSync(new URL('./scripts/check-readme-counts.mjs', repoRoot))
-  const selfHash = createHash('sha256').update(selfBytes).digest('hex')
-
-  const siblings = ['dsh-paradise', 'dsh-memory', 'dsh-graft-slice', 'dsh-observer']
+  const repoRoot = new URL('..', import.meta.url)
   const workspaceRoot = new URL('../', repoRoot)
-  const present = []
-  const differing = []
-  let anyPresent = false
+  const siblings = ['dsh-paradise', 'dsh-memory', 'dsh-graft-slice', 'dsh-observer']
+  const inCI = process.env.CI === 'true' || process.env.CI === '1'
 
-  for (const name of siblings) {
-    const candidate = new URL(`${name}/scripts/check-readme-counts.mjs`, workspaceRoot)
-    let bytes
+  for (const relative of IDENTICAL_ACROSS_REPOS) {
+    let selfBytes
     try {
-      bytes = readFileSync(candidate)
+      selfBytes = readFileSync(new URL(`./${relative}`, repoRoot))
     } catch {
+      // A throwaway fixture repository may not carry the file at all — say it, never crash.
+      ok(`本仓没有 ${relative}，跳过其跨仓一致性`)
       continue
     }
-    anyPresent = true
-    present.push(name)
-    const hash = createHash('sha256').update(bytes).digest('hex')
-    if (hash !== selfHash) differing.push(`${name} (${hash.slice(0, 12)} ≠ ${selfHash.slice(0, 12)})`)
-  }
+    const selfHash = createHash('sha256').update(selfBytes).digest('hex')
+    const present = []
+    const differing = []
+    for (const name of siblings) {
+      let bytes
+      try {
+        bytes = readFileSync(new URL(`${name}/${relative}`, workspaceRoot))
+      } catch {
+        continue
+      }
+      present.push(name)
+      const hash = createHash('sha256').update(bytes).digest('hex')
+      if (hash !== selfHash) differing.push(`${name} (${hash.slice(0, 12)} ≠ ${selfHash.slice(0, 12)})`)
+    }
 
-  if (!anyPresent) {
-    ok('单仓环境，跳过跨仓一致性（找不到同工作区的 dsh-*/scripts/check-readme-counts.mjs）')
-  } else if (differing.length > 0) {
-    fail(`check-readme-counts.mjs 四份副本已分叉：${differing.join(', ')}`)
-  } else {
-    ok(`check-readme-counts.mjs 与 ${present.length} 份同工作区副本一致（${selfHash.slice(0, 12)}）`)
+    if (present.length === 0) {
+      ok(`单仓环境，跳过 ${relative} 的跨仓一致性（同工作区没有 dsh-* 兄弟仓）`)
+    } else if (differing.length === 0) {
+      ok(`${relative} 与 ${present.length} 份同工作区副本一致（${selfHash.slice(0, 12)}）`)
+    } else if (inCI) {
+      ok(`[CI] ${relative} 版本不一致：${differing.join('; ')} —— CI 上兄弟仓取的是默认分支已推送版本，`
+        + '推送时序不同就会不同。这不是分叉的证明；本地 `npm run check` 会 FAIL。')
+    } else {
+      fail(`同源文件已分叉：${relative} —— ${differing.join('; ')}。`
+        + '同源文件必须逐字节相同（四仓一起改、一起提交）。')
+    }
   }
 }
 

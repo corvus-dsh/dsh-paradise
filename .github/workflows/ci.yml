@@ -117,7 +117,10 @@ jobs:
       #
       # Order: cycles (a structural CAUSE) before documentation counts (a SYMPTOM), same reasoning as
       # graft-slice and observer.
-      - name: Gates (new: cycles / type budget / readme counts)
+      # ⚠️ 引号是必需的，不是风格：值里的 `: `（冒号+空格）在 YAML 里是 mapping 指示符，
+      #    不加引号会让整个 workflow 解析失败（run 创建了但 0 个 job，门禁一条都不跑）。
+      #    实测事故：dsh-memory run 44002473416。守护判据：test/v220-workflow-yaml-safe.test.mjs。
+      - name: "Gates (new: cycles / type budget / readme counts)"
         # `type-budget` exits 2 when no compiler is present. This package declares no dependencies, so
         # on the runner it usually WILL be 2 — which is a RESOURCE condition, not a pass, and the
         # wrapper prints exactly that and exits 0. On a machine that has a compiler it enforces the

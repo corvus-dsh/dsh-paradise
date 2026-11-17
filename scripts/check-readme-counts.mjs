@@ -111,6 +111,21 @@ const failures = []
 const ok = (label) => passes.push(label)
 const fail = (label) => failures.push(label)
 
+/**
+ * The ONE place that turns `node --test` output into "how many tests does this repository HAVE".
+ *
+ * Both the success path and the `catch` path call this — a file whose two paths measure different
+ * things is the very defect this repository keeps writing down. See the `pass + skipped` argument
+ * where the suite is run below; `t.skip` counts toward `tests` (verified: one passing test + one
+ * `t.skip` ⇒ tests 2 / pass 1 / skipped 1), so `pass + skipped` is environment-independent.
+ */
+const countOf = (out) => {
+  const pass = /pass (\d+)/u.exec(out)
+  if (pass === null) return undefined
+  const skipped = /skipped (\d+)/u.exec(out)
+  return String(Number(pass[1]) + Number(skipped?.[1] ?? '0'))
+}
+
 // ── FACT 1: the test count ────────────────────────────────────────────────────────────────────
 /**
  * THE COMMAND MATTERS, AND THIS WAS MEASURED THE HARD WAY: `node --test test/` on Windows treats the
@@ -136,6 +151,32 @@ if (typeof script !== 'string') {
    * A gate must not report a number its own presence changed. So the suite is measured in a SEPARATE,
    * clean process — the same command a developer runs — and this process only reads the outcome.
    */
+  /**
+   * ── WHY `pass + skipped`, NOT `pass` ────────────────────────────────────────────────────────────
+   *
+   * Measured 2026-11-17 (CI run 44006262441): this gate was RED on every push and could not have
+   * been green. It compared the README's `546 / 546` against `node --test`'s `pass` count.
+   *
+   *   dev machine : `typescript` resolves upwards from the workspace root, all 546 run
+   *                 → pass 546  skipped 0
+   *   CI          : this package declares no dependencies, `npm install` installs nothing, so 13
+   *                 compiler-dependent tests call `t.skip(RESOURCE_REASON)`
+   *                 → pass 533  skipped 13      (TD-M15 enumerates them)
+   *
+   * The README's claim is "this repository HAS 546 tests". That is environment-independent, and
+   * `pass + skipped` is 546 in BOTH environments. What IS environment-dependent is how many of them
+   * could actually run — and that is not what the README claims.
+   *
+   * `t.skip` counting toward `tests` was verified directly, not assumed:
+   *   $ node --test  (one passing test + one `t.skip`)   →   tests 2 / pass 1 / fail 0 / skipped 1
+   *
+   * The "the suite is green" half is asserted independently below (`fail > 0` ⇒ RED, with the
+   * failing test names printed). So this does NOT weaken the gate: it removes a comparison that
+   * could only ever be true in one of the two environments.
+   *
+   * The SAME reading must be used in the `catch` branch: a file whose two paths measure different
+   * things is the very defect this repository keeps writing down.
+   */
   try {
     const out = execFileSync(script, {
       cwd: root,
@@ -145,7 +186,7 @@ if (typeof script !== 'string') {
       timeout: 900_000,
       env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^NODE_TEST/u.test(key))),
     })
-    actualTests = /pass (\d+)/u.exec(out)?.[1]
+    actualTests = countOf(out)
     const failedNow = Number(/fail (\d+)/u.exec(out)?.[1] ?? '0')
     if (failedNow > 0) {
       const failing = [...new Set([...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]))]
@@ -158,7 +199,7 @@ if (typeof script !== 'string') {
     }
   } catch (error) {
     const out = `${error?.stdout ?? ''}`
-    actualTests = /pass (\d+)/u.exec(out)?.[1]
+    actualTests = countOf(out)
     /**
      * A FLAKY SUITE IS NOT A STALE DOCUMENT — and this guard must not confuse the two.
      *

@@ -425,7 +425,7 @@ createDshAdapters(mountedCtx).session.capabilities.create            // true  �
 node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.mjs
 ```
 
-**当前 381/381（本地口径；CI 上走 `RESOURCE` skip 的测试也计入此总数）。** preflight 14 项，其中三项是这一层独有：
+**当前 384/384（本地口径；CI 上走 `RESOURCE` skip 的测试也计入此总数）。** preflight 14 项，其中三项是这一层独有：
 
 - 产物里的**协议区不含宿主名**（源码干净 ≠ 打包后干净）；
 - 两条拒绝路径仍然存在（`NOT_IMPLEMENTED` 与 `NOT_WIRED`）；

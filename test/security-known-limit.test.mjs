@@ -1,178 +1,172 @@
 /**
- * ── security-known-limit: 沙箱 fs 白名单不是安全边界（junction 可绕过）──────────────────────────
+ * ── security-known-limit: junction 判据**已修**，两条路各司其职 ────────────────────────────────
  *
- * 文件头必须写明的原文（README 已登记，见下）：**「已知边界，见 README 第 4 条：
- * 沙箱只抬高门槛，不是安全边界」**
+ * 本文件的前身（B4-0b-1 之前）钉的是一条**已知边界**：
  *
- * ── 实测得出的、比 README 更精确的一件事 ──────────────────────────────────────────────────────
+ *   · worker 内的 `within()` 走 `realish()` → `fs.realpathSync`，**不可绕过**；
+ *   · 导出的 `isWithinRoots()` 只做 `resolve() + startsWith`，**纯词法、可绕过**；
+ *   · 于是 `readWithin` / `listWithin` 经 junction 能读出根外内容 —— 实测漏的是数据，不只是布尔值。
  *
- * README 第 4 条说：「`within()` 只做词法规范化（`path.resolve`），不解析符号链接 / 目录联接」。
- * 本文件实测后发现这句话**只对了一半**，而它的另一半很重要：
+ * ── 用户裁定（2026-11-19，选 ②）与 W1-1 落地 ─────────────────────────────────────────────────────
  *
- *   · **worker 内的 `within()`**（`sandbox.ts:230`）走 `realish()` → `fs.realpathSync`，
- *     它**会**解析 junction。源码 L180-188 有一段专门的注释解释这个修复
- *     （「HOW IT IS FIXED. Resolve BOTH sides with fs.realpathSync」）。
- *     → 这条路**不可**绕过。
+ * 保留两份判据，但**名字说出强度**：
  *
- *   · **导出的 `isWithinRoots()`**（`sandbox.ts:432`，`readWithin` / `listWithin` 都用它）
- *     只做 `resolve(target)` + `startsWith`，**纯词法**，不碰 realpath。
- *     → 这条路**可以**绕过，本文件用一条真实 junction 证明了它。
+ *   · `isWithinRootsResolved` —— realpath 版。**任何真读/真写路径一律用它**（`readWithin` /
+ *     `listWithin` 已改）；
+ *   · `isWithinRootsLexical`  —— 词法版。只用于维修沙箱的**快速预检**，那里的调用方随后会把路径
+ *     交给真正做检查的一侧。
+ *   · 裸名 `isWithinRoots` **已删除**：它当时就指向弱实现，留一个 deprecated 别名等于把那个谎继续
+ *     挂着。
  *
- * 也就是说：同一个仓里有**两份判据**，一份解析链接、一份不解析，而导出的那份是不解析的。
- * 这不是「设计上的已知边界」那么简单 —— 已知边界说的是「我们选择不做这个防护」，
- * 而这里的情况是「同一个防护存在两个版本，用户拿到的那个是弱的那一个」。
+ * ── 本文件现在钉什么（全部必须能红）─────────────────────────────────────────────────────────────
  *
- * ── 本文件钉什么 ──────────────────────────────────────────────────────────────────────────────
- *
- *   ① 构造真实 junction：沙箱根内的一个目录指向沙箱外
- *   ② 断言 `isWithinRoots` 认为它**在**沙箱内（证明可绕过）
- *   ③ 断言 `readWithin` 真的**读出了**沙箱外的内容（证明漏的是数据，不只是布尔值）
- *   ④ 对照：直接读沙箱外路径**必须被拒**（证明不是「什么都没拦」）
- *   ⑤ can-red：把 `isWithinRoots` 换成 `() => true`，④ 的对照必须失效
- *
- * ── 建不了 junction 时怎么办（不是 skip 了事）──────────────────────────────────────────────────
- *
- * Windows 上 `fs.symlinkSync(target, path, 'junction')` 通常不需要管理员权限，
- * 但在某些受限环境（容器、禁用了开发模式的策略、非 NTFS 卷）会失败。
- * 那时的输出是 **`RESOURCE`**，并写明「本机无法建 junction，该边界未验证」，
- * 且**测试不通过为绿**——一个没验证的边界被默默 skip 掉，等于宣称它不存在。
+ *   ① 真实 junction：`…Lexical` 认为它在根内（证明这确实只是词法），而 `…Resolved` 认为它在根外；
+ *   ② `readWithin` 经 junction **必须被拒**（这是从「漏数据」变成「拦住」的那一条）；
+ *   ③ 对照：不经 junction 的根内读**必须成功** —— 证明 ② 不是「拦掉一切」；
+ *   ④ 直读根外**必须被拒** —— 证明白名单还在工作；
+ *   ⑤ 静态：真读/真写路径不得引用 `…Lexical`（否则判定强度又会被偷偷降回去）；
+ *   ⑥ 裸名 `isWithinRoots` 不许再导出（否则旧调用方会静默拿回弱判据）。
  */
-
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, symlinkSync, realpathSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
-const sandbox = await import(pathToFileURL(join(ROOT, 'src', 'adapters', 'raw', 'sandbox.ts')).href)
+import * as sandbox from '../src/adapters/raw/sandbox.ts'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const SANDBOX_SOURCE = readFileSync(join(HERE, '..', 'src', 'adapters', 'raw', 'sandbox.ts'), 'utf8')
 
 const PAYLOAD = 'SECRET-OUTSIDE-SANDBOX'
 
-/**
- * 建一个「根内目录 junction 指向根外目录」的场景。
- * 返回 null 表示本机建不了 junction（由调用方打印 RESOURCE）。
- */
-function makeJunctionScenario () {
-  const base = mkdtempSync(join(tmpdir(), 'paradise-junction-'))
+function makeJunctionScenario() {
+  const base = join(tmpdir(), `paradise-junction-${process.pid}-${Date.now().toString(36)}`)
   const inside = join(base, 'inside')
   const outside = join(base, 'outside')
-  const junction = join(inside, 'escape')
-  mkdirSync(inside, { recursive: true })
-  mkdirSync(outside, { recursive: true })
-  writeFileSync(join(outside, 'secret.txt'), PAYLOAD)
-
+  const junction = join(inside, 'link')
   try {
+    mkdirSync(inside, { recursive: true })
+    mkdirSync(outside, { recursive: true })
+    writeFileSync(join(outside, 'secret.txt'), PAYLOAD, 'utf8')
     symlinkSync(outside, junction, 'junction')
+    const real = (() => {
+      try {
+        return readFileSync(join(junction, 'secret.txt'), 'utf8')
+      } catch {
+        return ''
+      }
+    })()
+    if (real !== PAYLOAD) {
+      rmSync(base, { recursive: true, force: true })
+      return { base: null, error: new Error('junction 建出来了，但读不到外部内容') }
+    }
+    return { base, inside, outside, junction }
   } catch (error) {
     rmSync(base, { recursive: true, force: true })
     return { base: null, error }
   }
-
-  // 确认它真的是一个指向外部的 junction（而不是建了个空目录）
-  let pointsOutside = false
-  try {
-    pointsOutside = realpathSync(junction) === realpathSync(outside)
-  } catch {
-    pointsOutside = false
-  }
-  if (!pointsOutside) {
-    rmSync(base, { recursive: true, force: true })
-    return { base: null, error: new Error('junction 建出来了，但它不指向外部（realpath 不相等）') }
-  }
-  return { base, inside, outside, junction }
 }
 
-test('security-known-limit ①: junction 可绕过 isWithinRoots（导出版本只做词法规范化）', (t) => {
+test('known-limit ①: junction —— 词法版判「在内」，realpath 版判「在外」', (t) => {
   const scenario = makeJunctionScenario()
   if (scenario.base === null) {
-    /**
-     * 不是 skip。skip 会让这条在 CI 上永远是灰的，下一个人读报告时看不到「没验证」。
-     */
     t.diagnostic(`RESOURCE: 本机无法建立可用的 junction（${scenario.error?.message ?? 'unknown'}）。`)
     t.diagnostic('该边界**未验证**。这不是通过 —— 是「本机测不了」。')
-    assert.fail('RESOURCE: 本机无法建 junction，沙箱 junction 绕过这一条边界未验证（不是 skip，是未验证）')
+    assert.fail('RESOURCE: 本机无法建 junction，沙箱 junction 边界未验证（不是 skip，是未验证）')
     return
   }
-
   try {
     const viaJunction = join(scenario.junction, 'secret.txt')
-
-    // ② 核心断言：白名单认为它在内 —— 这就是「可绕过」的定义
-    const consideredInside = sandbox.isWithinRoots(viaJunction, [scenario.inside])
-    assert.equal(consideredInside, true,
-      `isWithinRoots 应把「根内 junction → 根外」判定为在沙箱内（这正是已知边界）。`
-      + `实测 false —— 说明这条已修复，请把本文件改成断言「已修复」，不要留着一条永远绿的旧断言。`)
-
-    // ③ 漏的是数据，不只是布尔值
-    const leaked = sandbox.readWithin(viaJunction, [scenario.inside])
-    assert.equal(leaked, PAYLOAD,
-      `readWithin 经 junction 应读出根外内容 ${JSON.stringify(PAYLOAD)}。实测 ${JSON.stringify(leaked.slice(0, 40))}`)
-
-    // ④ 对照：不经 junction 的直读必须被拒 —— 证明不是「什么都没拦」
-    assert.throws(
-      () => sandbox.readWithin(join(scenario.outside, 'secret.txt'), [scenario.inside]),
-      /SANDBOX_DENIED/u,
-      '对照失败：直接读沙箱外路径**必须**被拒。若这条也过了，说明整个白名单失效，'
-      + '而不是「junction 这一条已知边界」。',
+    assert.equal(
+      sandbox.isWithinRootsLexical(viaJunction, [scenario.inside]),
+      true,
+      '词法版**应当**判它在内 —— 这就是「词法」的定义，也是它只能做预检的理由',
+    )
+    assert.equal(
+      sandbox.isWithinRootsResolved(viaJunction, [scenario.inside]),
+      false,
+      'realpath 版必须看穿 junction —— 否则真读路径还会漏',
     )
   } finally {
     rmSync(scenario.base, { recursive: true, force: true })
   }
 })
 
-test('security-known-limit ② can-red: 把 isWithinRoots 换成 () => true ⇒ ④ 的对照必须失效', () => {
-  /**
-   * 这条证明 ④（「直读外部必须被拒」）不是恒真的。
-   *
-   * 做法：用 `() => true` 代替 `isWithinRoots`，重放 ④ 的拒绝逻辑。
-   * 在真判据下它会 throw SANDBOX_DENIED；在恒 true 下它不会 throw。
-   * 若两者行为相同，说明 ④ 测的不是判据本身。
-   */
-  const denyCheck = (isWithin) => {
-    const target = join('C:', 'definitely', 'outside', 'secret.txt')
-    if (!isWithin(target)) throw new Error('SANDBOX_DENIED: read ' + target)
-    return 'ALLOWED'
+test('known-limit ②: readWithin 经 junction **必须被拒**（从漏数据 → 拦住）', (t) => {
+  const scenario = makeJunctionScenario()
+  if (scenario.base === null) {
+    t.diagnostic(`RESOURCE: 本机无法建立可用的 junction（${scenario.error?.message ?? 'unknown'}）。`)
+    assert.fail('RESOURCE: 本机无法建 junction，readWithin 的 junction 边界未验证')
+    return
   }
-
-  // 真判据（用源里的 isWithinRoots，把根设成一个不可能包含它的路径）
-  const realRootsOnly = [join(tmpdir(), 'paradise-canred-root-does-not-matter')]
-  let realThrew = false
   try {
-    denyCheck((target) => sandbox.isWithinRoots(target, realRootsOnly))
-  } catch (e) {
-    realThrew = /SANDBOX_DENIED/u.test(e.message)
+    const viaJunction = join(scenario.junction, 'secret.txt')
+    assert.throws(
+      () => sandbox.readWithin(viaJunction, [scenario.inside]),
+      /SANDBOX_DENIED/u,
+      `readWithin 必须拒绝 junction 指向根外的读；若这里读出了 ${JSON.stringify(PAYLOAD)}，说明 W1-1 退化`,
+    )
+  } finally {
+    rmSync(scenario.base, { recursive: true, force: true })
   }
-  assert.equal(realThrew, true, '真判据下，根外路径必须触发 SANDBOX_DENIED')
-
-  // 恒 true 的桩：必须**不再**抛错，否则这条 can-red 没构造出「判据失效」
-  let stubThrew = false
-  try {
-    denyCheck(() => true)
-  } catch {
-    stubThrew = true
-  }
-  assert.equal(stubThrew, false,
-    '把 isWithinRoots 换成 () => true 之后，拒绝逻辑必须失效（不再抛错）。'
-    + '它仍然抛错，说明这条 can-red 没有真的替换掉判据。')
 })
 
-/**
- * ── 这一条是「已修复的那一半」，单独钉住，防止有人把它一起改坏 ────────────────────────────────
- *
- * worker 内的 `within()` 走 realish()/realpathSync，**已经**能识别 junction。
- * 本文件不通过 spawn worker 来测它（那需要构造完整 workerData 与源码字符串），
- * 而是直接钉住那条源码事实：`realish` 用的是 `realpathSync`。
- *
- * 为什么值得钉：如果有人为了「统一两份判据」把 realish 也降级成 resolve，
- * 那 worker 路径会跟着失守，而上面第一条测试**不会红**（它测的是导出 API）。
- */
-test('security-known-limit ③: worker 内的 within() 仍然用 realpathSync 解析链接（不要把它一起降级）', () => {
-  const source = readFileSync(join(ROOT, 'src', 'adapters', 'raw', 'sandbox.ts'), 'utf8')
-  assert.match(source, /fs\.realpathSync\(probe\)/u,
-    'worker 内的 realish() 必须继续用 fs.realpathSync 解析链接。'
-    + '两份判据里，导出那份弱是已知边界，worker 这份弱就是回归。')
-  assert.match(source, /function realish\(target\)/u,
-    'realish() 必须还在 —— 它是 worker 路径唯一解析链接的地方')
+test('known-limit ③: 对照 —— 根内普通文件仍读得到（② 不是「拦掉一切」）', (t) => {
+  const scenario = makeJunctionScenario()
+  if (scenario.base === null) {
+    t.diagnostic(`RESOURCE: 本机无法建立可用的 junction（${scenario.error?.message ?? 'unknown'}）。`)
+    assert.fail('RESOURCE: 本机无法建 junction，对照未验证')
+    return
+  }
+  try {
+    const insideFile = join(scenario.inside, 'plain.txt')
+    writeFileSync(insideFile, 'INSIDE-OK', 'utf8')
+    assert.equal(sandbox.readWithin(insideFile, [scenario.inside]), 'INSIDE-OK')
+  } finally {
+    rmSync(scenario.base, { recursive: true, force: true })
+  }
+})
+
+test('known-limit ④: 直读根外**必须被拒**（白名单还在工作）', () => {
+  const outside = join(tmpdir(), `paradise-outside-${process.pid}-${Date.now().toString(36)}`)
+  mkdirSync(outside, { recursive: true })
+  try {
+    writeFileSync(join(outside, 'secret.txt'), PAYLOAD, 'utf8')
+    const inside = join(tmpdir(), `paradise-inside-${process.pid}-${Date.now().toString(36)}`)
+    mkdirSync(inside, { recursive: true })
+    try {
+      assert.throws(() => sandbox.readWithin(join(outside, 'secret.txt'), [inside]), /SANDBOX_DENIED/u)
+    } finally {
+      rmSync(inside, { recursive: true, force: true })
+    }
+  } finally {
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('known-limit ⑤: 静态 —— 真读/真写路径不得引用词法版', () => {
+  /**
+   * The whole point of W1-1 is that the WEAK version must never guard a real read again. Reading the
+   * source is the only way to keep that true after someone "simplifies" a call site.
+   */
+  for (const fn of ['readWithin', 'listWithin']) {
+    const start = SANDBOX_SOURCE.indexOf(`export function ${fn}(`)
+    assert.notEqual(start, -1, `${fn} 必须存在`)
+    const body = SANDBOX_SOURCE.slice(start, SANDBOX_SOURCE.indexOf('\n}\n', start))
+    assert.match(body, /isWithinRootsResolved/u, `${fn} 必须用 realpath 版判据`)
+    assert.equal(/isWithinRootsLexical/u.test(body), false, `${fn} 不许用词法版 —— 那就是这一条要修的东西`)
+  }
+})
+
+test('known-limit ⑥: 裸名 isWithinRoots 不许再导出（旧调用方不许静默拿回弱判据）', () => {
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(sandbox, 'isWithinRoots'),
+    false,
+    '裸名已删除；留下它等于让下一个调用方在不知道强度的情况下拿到词法版',
+  )
+  /** 两个新名字都必须是函数，否则上面的断言会在「根本没导出」时假绿。 */
+  assert.equal(typeof sandbox.isWithinRootsLexical, 'function')
+  assert.equal(typeof sandbox.isWithinRootsResolved, 'function')
 })

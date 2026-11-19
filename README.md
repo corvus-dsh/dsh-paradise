@@ -439,19 +439,21 @@ node scripts/build.mjs && node scripts/preflight.mjs && node --test test/*.test.
 1. **路径推导依赖未被承诺的目录布局。** 已标成 `derived:`，失效方式是"读文件失败"，不会伪造成功。
 2. **`RENDERED_CONVERSATION_TYPES` 是实测常量**（住在 `adapters/dsh/policy.ts`），只用于**报告**。
 3. **`inject` 只覆盖 create 时放置**。向已存在会话追加是另一条路径（打开持久句柄写 step-scoped 事件），未接线且如实报告。
-4. **沙箱的 fs 白名单不是安全边界。** 而且原因是具体的：**白名单有两个版本，强度不同。**
+4. **沙箱的 fs 白名单不是安全边界**（`node:vm` 本身就不是）。两份判据各司其职，**名字说出强度**：
 
-   - **worker 内的 `within()`**（`adapters/raw/sandbox.ts`，沙箱实际执行时用的那一个）
-     经 `realish()` 走 `fs.realpathSync`，**会解析符号链接与 Windows 目录联接**。
-     沙箱根内的一个 junction 指向外部时，它**拒绝**——这条路**不可**绕过。
-   - **导出的 `isWithinRoots()`**（同文件，`readWithin()` / `listWithin()` 用的那一个）
-     只做 `resolve()` + `startsWith`，**纯词法，不解析链接**。
-     同一个 junction 在这里**被判为「在根内」**，内容会被读出——这条路**可以**绕过。
+   - `isWithinRootsResolved` —— `fs.realpathSync` 版，解析符号链接与 Windows 目录联接。
+     **任何真读 / 真写路径一律用它**：`readWithin()` / `listWithin()` 都走它，
+     根内 junction 指向根外时**拒绝**。
+   - `isWithinRootsLexical` —— 纯词法（`resolve()` + `startsWith`），**只用于维修沙箱的快速预检**，
+     因为调用方随后会把路径交给上面那份做真正的检查。它**判不出** junction，这是它的定义，不是缺陷。
+   - **裸名 `isWithinRoots` 已删除**（2026-11-19，TD-23 裁定 ②）：它当时指向词法版，
+     留一个通用名等于让下一个调用方在不知道强度的情况下拿到弱判据。
+   - 这一条由 `test/security-known-limit.test.mjs` 的六条断言钉住，其中最硬的是
+     「`readWithin` 经 junction **必须被拒**」与「真读写路径**不得引用**词法版」两条静态/行为检查。
 
-   所以「沙箱不是安全边界」这句话仍然成立，但**成立的原因是导出件那一份弱**，
-   而不是「全仓都不解析链接」。早先此处写的是「`within()` 只做词法规范化」，
-   那句话对一半：确实有一个只做词法规范化的实现，但**它不是 worker 执行时用的那一个**。
-   已按实测订正（2026-11-16，见 graft 仓 `ARCHITECTURE.md` 的 TD-23 登记）。
+   早先此处写的是「`within()` 只做词法规范化」，那句话对一半：确实有一个只做词法规范化的实现，
+   但**它不是 worker 执行时用的那一个**。已按实测订正（2026-11-16 登记为 graft 仓 `ARCHITECTURE.md`
+   的 TD-23；2026-11-19 按裁定 ② 落地）。
 
    需要真正隔离请用 `node --permission` / 容器 / seccomp。
 5. **裸机模式不含宿主能力诊断。** `assertHostCapabilities` / `REQUIRED_HOST_CAPABILITIES`

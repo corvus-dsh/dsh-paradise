@@ -653,7 +653,13 @@ import {
   isUnresolved,
 } from './emergency-repair.js'
 import { createRawSessionAdapter } from './adapters/raw/session.js'
-import { SANDBOX_CAPABILITIES, isWithinRoots, listWithin, readWithin } from './adapters/raw/sandbox.js'
+import {
+  SANDBOX_CAPABILITIES,
+  isWithinRootsLexical,
+  isWithinRootsResolved,
+  listWithin,
+  readWithin,
+} from './adapters/raw/sandbox.js'
 
 export {
   EMERGENCY_SETUP,
@@ -667,7 +673,16 @@ export {
   createRawToolFactory,
   extractToolSource,
   isUnresolved,
-  isWithinRoots,
+  /**
+   * TD-23 / W1-1: BOTH names are exported, and neither is called `isWithinRoots`.
+   *
+   * The bare name is gone on purpose — it was the weak implementation, and a caller could not tell.
+   * `…Resolved` is what reads and writes use; `…Lexical` exists only for the repair sandbox's
+   * pre-flight check. `test/security-known-limit.test.mjs` pins that `readWithin`/`listWithin` use
+   * the resolved one.
+   */
+  isWithinRootsLexical,
+  isWithinRootsResolved,
   listWithin,
   readWithin,
 }

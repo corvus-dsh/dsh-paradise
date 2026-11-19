@@ -59,8 +59,8 @@
  */
 
 import { Worker } from 'node:worker_threads'
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, resolve, sep } from 'node:path'
+import { mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 /** What this sandbox can and cannot do. Read it before trusting a tool. */
 export interface SandboxCapabilities {
@@ -428,8 +428,26 @@ export function ensureRoot(dir: string): string {
   return absolute
 }
 
-/** Is `target` inside one of `roots`? Exported so a caller can pre-check without spawning a worker. */
-export function isWithinRoots(target: string, roots: readonly string[]): boolean {
+/**
+ * ── TD-23 / B4-0b-2 W1-1: TWO CHECKS, AND THE NAMES SAY WHICH IS WHICH ────────────────────────
+ *
+ * There have always been two implementations of "is this inside the roots?":
+ *
+ *   · the worker's `within()` (above) calls `realish()` → `fs.realpathSync`, so a JUNCTION is resolved
+ *     and cannot escape. It is the one that guards every real read and write.
+ *   · the exported helper did `resolve()` + `startsWith` only — pure lexical. A junction pointing
+ *     outside the sandbox passed it, and `readWithin` then read the file outside.
+ *
+ * USER RULING (2026-11-19, option ②): keep both, but make the NAMES state their strength. The lexical
+ * version is legitimate for ONE purpose — a fast pre-flight in the repair sandbox, where the caller is
+ * about to hand the path to something that will do the real check. Anything that actually READS or
+ * WRITES must use the resolved version.
+ *
+ * `isWithinRootsLexical` is therefore the old export under an honest name, and `isWithinRootsResolved`
+ * is the safe one. The bare name is GONE on purpose: leaving `isWithinRoots` pointing at the weak
+ * implementation is what made the API lie, and a deprecated alias would keep the lie available.
+ */
+export function isWithinRootsLexical(target: string, roots: readonly string[]): boolean {
   const resolved = resolve(target)
   for (const root of roots) {
     const base = resolve(root)
@@ -439,16 +457,60 @@ export function isWithinRoots(target: string, roots: readonly string[]): boolean
   return false
 }
 
+/**
+ * The real check: resolve every root AND the target through `fs.realpathSync`, then compare.
+ *
+ * This is the same algorithm the worker uses (`realish` + prefix compare), reproduced here because
+ * the worker lives in a separate module scope and cannot be imported into a caller's process. A target
+ * that does not exist is resolved by its nearest existing ancestor and appended lexically — the same
+ * rule as `realish`, so a not-yet-created path is judged the same way in both places.
+ */
+export function isWithinRootsResolved(target: string, roots: readonly string[]): boolean {
+  const real = (() => {
+    try {
+      const absolute = resolve(target)
+      let probe = absolute
+      const tail: string[] = []
+      for (;;) {
+        try {
+          const found = realpathSync(probe)
+          return tail.length === 0 ? found : join(found, ...tail.reverse())
+        } catch {
+          const parent = dirname(probe)
+          if (parent === probe) return undefined
+          tail.push(basename(probe))
+          probe = parent
+        }
+      }
+    } catch {
+      return undefined
+    }
+  })()
+  if (real === undefined) return false
+  for (const root of roots) {
+    const base = (() => {
+      try {
+        return realpathSync(resolve(root))
+      } catch {
+        return resolve(root)
+      }
+    })()
+    if (real === base) return true
+    if (real.startsWith(base + sep)) return true
+  }
+  return false
+}
+
 /** Read a file for the emergency prompt, refusing anything outside the roots. */
 export function readWithin(target: string, roots: readonly string[], maxBytes = 60_000): string {
-  if (!isWithinRoots(target, roots)) throw new Error(`SANDBOX_DENIED: read ${target}`)
+  if (!isWithinRootsResolved(target, roots)) throw new Error(`SANDBOX_DENIED: read ${target}`)
   const text = readFileSync(resolve(target), 'utf8')
   return text.length > maxBytes ? `${text.slice(0, maxBytes)}\n…（已截断，原文件 ${text.length} 字节）` : text
 }
 
 /** List a directory for the emergency prompt, refusing anything outside the roots. */
 export function listWithin(target: string, roots: readonly string[]): string[] {
-  if (!isWithinRoots(target, roots)) throw new Error(`SANDBOX_DENIED: list ${target}`)
+  if (!isWithinRootsResolved(target, roots)) throw new Error(`SANDBOX_DENIED: list ${target}`)
   try {
     return readdirSync(resolve(target))
   } catch {

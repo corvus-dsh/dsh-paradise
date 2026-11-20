@@ -238,6 +238,52 @@ test('v281 ⑥: burn-in 绿的时候也报出次数（不是只说通过）', ()
   }
 })
 
+// ── ⑧ concurrency must be counted in the acceptance sentence (W1-13b) ─────────────────────
+
+test('v281 ⑧: --concurrency > 1 时收尾句的总次数 = runs × concurrency（不许少报）', () => {
+  /**
+   * ── THE SENTENCE IS THE EVIDENCE, SO IT MUST COUNT EVERY ATTEMPT (measured by the reviewer) ───
+   *
+   * `--runs=2 --concurrency=4` printed `8/8 passed` and then the copyable acceptance line said
+   * **× 2**. The total is 8. That line is what goes into an acceptance document verbatim, so the
+   * under-report is not cosmetic — it is a false claim about how much was tested, and it happened in
+   * the same file that exists to stop «一次通过被当成稳定».
+   *
+   * The fix prints the TOTAL, and when concurrency > 1 also the shape (`2 round(s) × 4 concurrent`),
+   * because 「× 2」 and 「× 8」 are different claims.
+   */
+  const root = mkdtempSync(join(tmpdir(), 'dsh-v281-conc-'))
+  try {
+    const skeleton = join(root, 'repo')
+    mkdirSync(join(skeleton, 'scripts'), { recursive: true })
+    mkdirSync(join(skeleton, 'test'), { recursive: true })
+    cpSync(join(REPO, 'scripts', 'burn-in.mjs'), join(skeleton, 'scripts', 'burn-in.mjs'))
+    writeFileSync(
+      join(skeleton, 'test', 'ok.test.mjs'),
+      ["import test from 'node:test'", "import assert from 'node:assert/strict'", "test('green', () => { assert.equal(1, 1) })", ''].join('\n'),
+      'utf8',
+    )
+
+    const run = spawnSync(
+      process.execPath,
+      [join(skeleton, 'scripts', 'burn-in.mjs'), join('test', 'ok.test.mjs'), '--runs=2', '--concurrency=4'],
+      { cwd: skeleton, encoding: 'utf8', env: cleanTestEnv() },
+    )
+    const output = `${run.stdout}${run.stderr}`
+    assert.equal(run.status, 0, `绿的时候必须 exit 0；actual ${run.status}\n${output.slice(-700)}`)
+    assert.match(output, /8\/8 passed/u, '必须报出总尝试次数 8')
+    /** THE ASSERTION THIS ITEM EXISTS FOR: the copyable line must say 8, not 2. */
+    assert.match(
+      output,
+      /check exit 0 × 8 \(2 round\(s\) × 4 concurrent\), failures 0\./u,
+      `收尾句必须写总次数 8 并说明构成；actual:\n${output.slice(-700)}`,
+    )
+    assert.doesNotMatch(output, /check exit 0 × 2,/u, '不许把 8 次尝试报成 × 2')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 // ── ⑦ zero attempts must never read as a pass ──────────────────────────────────────────────
 
 test('v281 ⑦: 空跑（0 次尝试）不算通过 —— 「一次通过被当成稳定」的算术错误', () => {

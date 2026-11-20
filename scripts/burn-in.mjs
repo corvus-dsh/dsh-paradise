@@ -246,10 +246,32 @@ if (failures.length === 0) {
   console.log(
     `BURN-IN PASSED — ${files.length} file(s), ${options.runs * options.concurrency} run(s) each, 0 failure(s).`,
   )
-  console.log(`Acceptance may now be written as: check exit 0 × ${options.runs}, failures 0.`)
+  /**
+   * ── THE ACCEPTANCE SENTENCE MUST COUNT EVERY ATTEMPT (W1-13b, measured) ──────────────────────
+   *
+   * This line used to read `check exit 0 × ${options.runs}` — but with `--concurrency > 1` the total
+   * is `runs × concurrency`. Measured by the reviewer: `--runs=2 --concurrency=4` printed
+   * `8/8 passed` and then the sentence said **× 2** — under-reporting the work by a factor of four,
+   * in the exact words people copy into an acceptance document.
+   *
+   * That is this batch's arithmetic error again (`0 failures over 0 attempts` was the same bug in the
+   * other direction), and it is worse here than an off-by-one: the sentence is the EVIDENCE. So the
+   * total is printed, and when concurrency > 1 the shape is spelled out instead of flattened into one
+   * number, because 「× 2」 and 「× 8」 are claims about how much was tested.
+   */
+  const total = options.runs * options.concurrency
+  console.log(
+    options.concurrency === 1
+      ? `Acceptance may now be written as: check exit 0 × ${options.runs}, failures 0.`
+      : `Acceptance may now be written as: check exit 0 × ${total} ` +
+          `(${options.runs} round(s) × ${options.concurrency} concurrent), failures 0.`,
+  )
   process.exit(0)
 }
 
-console.log(`BURN-IN FAILED — ${failures.length} failure(s). Acceptance may NOT be written as stable.`)
+console.log(
+  `BURN-IN FAILED — ${failures.length} failure(s) out of ${files.length * options.runs * options.concurrency} ` +
+    `attempt(s). Acceptance may NOT be written as stable.`,
+)
 for (const failure of failures) console.log(`  ${failure.file} (run ${failure.occurrence}): ${failure.detail}`)
 process.exit(1)

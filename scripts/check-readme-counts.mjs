@@ -74,9 +74,9 @@
  *   非空行 = that split's entries with trim().length > 0
  */
 import { readFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { observeSuite } from './suite-observation.mjs'
 
 const root = process.cwd()
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
@@ -178,51 +178,29 @@ if (typeof script !== 'string') {
    * things is the very defect this repository keeps writing down.
    */
   try {
-    const out = execFileSync(script, {
-      cwd: root,
-      shell: true,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 900_000,
-      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^NODE_TEST/u.test(key))),
-    })
-    actualTests = countOf(out)
-    const failedNow = Number(/fail (\d+)/u.exec(out)?.[1] ?? '0')
-    if (failedNow > 0) {
-      const failing = [...new Set([...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]))]
-        .filter((name) => name !== 'failing tests:' && !/^(test at|test)$/u.test(name))
+    /**
+     * ── W4-1: ONE OBSERVATION, THREE GATES ─────────────────────────────────────────────────────────
+     *
+     * This block used to spawn the whole suite through the package's own `test` script. Measured
+     * 2026-11-20: `check-readme-counts` 79.8 s + `check-docs` 79.1 s + `check-readme-tally` 78.1 s +
+     * the final `node --test` 77.2 s — the same suite four times, ~314 s of a ~313 s check.
+     *
+     * `suite-observation.mjs` now serves all three from ONE TAP run. The JUDGEMENTS stay separate:
+     * this gate still refuses to judge a document while the suite is red, and still names the failing
+     * tests. Only the OBSERVATION is shared, so a bug in one gate cannot hide behind another's answer.
+     */
+    const { index } = observeSuite({ root })
+    actualTests = (index.pass ?? 0) + (index.skipped ?? 0)
+    if ((index.fail ?? 0) > 0) {
       fail(
-        `测试套件自身未全绿（${failedNow} 条失败：${failing.slice(0, 3).join(' / ') || '未解析出名称'}）。` +
+        `测试套件自身未全绿（${index.fail} 条失败：${index.failing.slice(0, 3).join(' / ') || '未解析出名称'}）。` +
           '本次不判定文档是否过期——先修测试，再谈计数。',
       )
       actualTests = undefined
     }
   } catch (error) {
-    const out = `${error?.stdout ?? ''}`
-    actualTests = countOf(out)
-    /**
-     * A FLAKY SUITE IS NOT A STALE DOCUMENT — and this guard must not confuse the two.
-     *
-     * Measured 2026-11-09: `dsh-paradise` fails 0–2 of its own tests roughly one run in six, always the
-     * same pair (`self-heal: a chatty model still closes the loop…` / `…fails LOUDLY…`) — end-to-end
-     * tests that really spawn a host, restart it and check the pid. When that happens the count is 353
-     * instead of 354, and reporting "README says 354, actual 353" would blame the DOCUMENT for a
-     * red suite. A gate that cries wolf gets switched off.
-     *
-     * So: a FAILING run is reported as a failing run, with the failing test names, and it is RED — the
-     * suite must be green for the count to mean anything. What is NOT claimed is that the number is
-     * stale, because that conclusion is unsupported.
-     */
-    const failing = [...new Set([...out.matchAll(/^✖ (.+?) \(/gmu)].map((match) => match[1]))]
-      .filter((name) => name !== 'failing tests:' && !/^(test at|test)$/u.test(name))
-    if ((/fail ([1-9]\d*)/u.exec(out)?.[1] ?? '0') !== '0') {
-      fail(
-        `测试套件自身未全绿（${failing.length} 条失败：${failing.slice(0, 3).join(' / ') || '未解析出名称'}）。` +
-          '本次不判定文档是否过期——先修测试，再谈计数。',
-      )
-    } else if (actualTests === undefined) {
-      fail('测试数无法测得：test 脚本失败且输出不可解析')
-    }
+    actualTests = undefined
+    fail(`测试数无法测得：${String(error?.message ?? error)}`)
   }
 }
 if (actualTests !== undefined) {

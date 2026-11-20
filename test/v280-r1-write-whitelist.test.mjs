@@ -26,8 +26,13 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { createLauncher, repairWriteAllowed, repairWriteViolation } from '../index.js'
+
+const REPO = fileURLToPath(new URL('..', import.meta.url))
 
 const NO_TIMERS = { setIntervalImpl: () => ({}), clearIntervalImpl: () => {} }
 
@@ -125,4 +130,28 @@ test('v280 ③: 提到 src/protocol（读它、或注释里说明不碰它）不
   assert.equal(repairWriteViolation("writeFileSync('harness.ts', 'x')"), undefined, 'harness 自身允许')
   assert.equal(repairWriteAllowed('src/adapters/dsh/tool.ts'), true)
   assert.equal(repairWriteAllowed('C:/other/package/src/adapters/x.ts'), false, '仓库之外的绝对路径不许')
+})
+
+// ── ④ the docs must say which rules have teeth (TD-25) ────────────────────────────────────
+
+test('v280 ④: SELF_HEALING_PROMPT 必须写明哪几条规则只有提示词（R2/R3/R5 无判据）', () => {
+  /**
+   * ── WHY A DOCS ASSERTION BELONGS IN THIS FILE ───────────────────────────────────────────────
+   *
+   * R1 and R4 are now enforced; R2, R3 and R5 are only sentences. Written as a flat list of five,
+   * all five READ like requirements — a reader (or a model) plans as if deleting an export and saying
+   * nothing would be caught. It would not be (TD-25).
+   *
+   * The honest form is a table that names the enforcement status of each rule. This test keeps that
+   * table from silently reverting to a flat list, which is how the gap got invisible in the first place.
+   */
+  const prompt = readFileSync(join(REPO, 'SELF_HEALING_PROMPT.md'), 'utf8')
+  assert.match(prompt, /WHICH OF THESE ARE ENFORCED, AND WHICH ARE ONLY ASKED FOR/u, '必须有一段说明强制力的表')
+  assert.match(prompt, /R1 只改适配层 \| \*\*机械判据\*\*/u, 'R1 必须标为机械判据')
+  assert.match(prompt, /R2 不发明 API \| \*\*仅提示词\*\*/u, 'R2 必须标为仅提示词')
+  assert.match(prompt, /R3 说明改名或消失 \| \*\*仅提示词\*\*/u, 'R3 必须标为仅提示词')
+  assert.match(prompt, /R5 不碰测试 \| \*\*仅提示词\*\*/u, 'R5 必须标为仅提示词')
+  assert.match(prompt, /TD-25/u, 'R3 的缺口必须指向登记条目，否则读者无从追')
+  /** And each rule's own paragraph repeats its status — a table alone is scrolled past. */
+  assert.match(prompt, /无机械判据 —— 只有这段文字。缺口登记为 TD-25/u, 'R3 段落本身也要说出来')
 })

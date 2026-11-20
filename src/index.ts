@@ -97,7 +97,7 @@ import {
   rewriteRouteConfig,
   routeConfigExists,
 } from './adapters/raw/index.js'
-import { REPAIR_PROMPT, createLauncher } from './launcher.js'
+import { REPAIR_PROMPT, createLauncher, repairWriteAllowed, repairWriteViolation } from './launcher.js'
 import { connectNetworkNode, startNetworkNode } from './adapters/http/network-storage.js'
 import type { NetworkClientOptions, NetworkServer, NetworkServerOptions } from './adapters/http/network-storage.js'
 
@@ -363,6 +363,15 @@ export {
   /** The dual-mode supervisor and the prompt its repairs are built from. */
   createLauncher,
   REPAIR_PROMPT,
+  /**
+   * ── v1.4 (W3-4 ①): R1 AS A PREDICATE, SHIPPED ────────────────────────────────────────────────
+   *
+   * Exported because the boundary it draws is a fact about the repair subsystem that a caller (or a
+   * test) must be able to check directly — 「只输出适配层的代码」 was a sentence in a prompt for a year
+   * and no one could ask it a question.
+   */
+  repairWriteAllowed,
+  repairWriteViolation,
   /**
    * THE NETWORK TIER, IMPLEMENTED — two HTTP endpoints and a client.
    *

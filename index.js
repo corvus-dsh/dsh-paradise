@@ -3210,6 +3210,10 @@ async function deleteSession(ctx     , sessionId        , reason        )       
   const warnings           = []
   const persistence = service(ctx, 'sessionPersistence', 'create')
   const persistenceAny = service(ctx, 'sessionPersistence')
+  /**
+   * capability-optional: 缺它时下面的 live-store 分支整段跳过，而**删除本身仍由 stat 前后各核一次**
+   * （artifactPresence），回执里写的是「核实过」，不是「接口调过」。所以它不是 BOOT 必需项。
+   */
   const sessions = service(ctx, 'sessions', 'get')
 
   const before = await artifactPresence(persistenceAny, sessionId)
@@ -3568,6 +3572,11 @@ async function createSession(ctx     , options               )                  
     return fail('arguments', 'NO_CONTENT', '没有要注入的内容：会话不能在没有内容的情况下诞生')
   }
 
+  /**
+   * capability-optional: 下一行自己用 `typeof prepare !== 'function'` 拒绝（SESSIONS_UNAVAILABLE），
+   * 所以宿主没有 `sessions.get` 时不会静默降级。它之所以不是 BOOT 必需项：引导时会说清楚「不允许
+   * 准备零继承会话」，这句拒绝就是它的能力报告。
+   */
   const sessions = service(ctx, 'sessions', 'get')
   if (typeof sessions !== 'object' || sessions === null || typeof (sessions       ).prepare !== 'function') {
     return fail('prepare', 'SESSIONS_UNAVAILABLE', 'sessions.prepare 不可用：宿主不允许准备零继承会话')
@@ -3788,6 +3797,10 @@ async function createSession(ctx     , options               )                  
     /* publishing: best effort, and REPORTED rather than assumed */
     stage = 'publish'
     const shouldPublish = options.publish !== false
+    /**
+     * capability-optional: 只在**发布**阶段解析（`publish !== false`），缺它就是「这个宿主没有
+     * workspace 注册表、发布跳过」，下面的 typeof 守卫挡住，回执里写明哪一段没做。不是 BOOT 必需项。
+     */
     const registry = shouldPublish ? service(ctx, 'workspaceRegistry', 'resolveByPath') : undefined
     if (typeof registry === 'object' && registry !== null && typeof (registry       ).resolveByPath === 'function') {
       try {
@@ -5353,6 +5366,10 @@ function createDshToolAdapter(ctx     )              {
     },
 
     async execute(input)                       {
+      /**
+       * capability-optional: 缺它就返回 TOOL_REGISTRY_UNAVAILABLE 的具名错误（下一行），
+       * 不是静默成功 —— 所以它不需要成为 BOOT 必需项。
+       */
       const tools = service(ctx, 'tools', 'execute')
       if (tools === undefined || typeof tools.execute !== 'function') {
         return { isError: true, error: { code: 'TOOL_REGISTRY_UNAVAILABLE', message: 'tools.execute 不可用' } }
@@ -9738,6 +9755,45 @@ function isUnresolved(text        )          {
  * path fails on the other, so there is now one implementation and both paths call it.
  */
 
+/**
+ * ── R1, AS EXECUTABLE CODE ────────────────────────────────────────────────────────────────────
+ *
+ * The prompt states R1 as a paragraph. A paragraph cannot refuse anything — this can.
+ *
+ * WHAT IT INSPECTS: the WRITE TARGETS in the repair source, i.e. the first string literal handed to a
+ * writing call (`writeFileSync`, `appendFileSync`, `renameSync`, `rmSync`, …). Not every path mentioned:
+ * a repair whose comment explains 「we are NOT touching src/protocol/」 must not trip the gate, and a
+ * repair that READS the protocol is legitimate — adapting to it is the entire job.
+ *
+ * WHAT IT DOES NOT CATCH, AND SAYS SO: a repair that builds its target path at runtime
+ * (`path.join(dir, name)`) cannot be classified statically. This is a WHITELIST of what may be written,
+ * not a sandbox; the actual write still has to be correct. Stating the limit is cheaper than a
+ * heuristic that misfires — and a misfiring gate gets switched off, which is worse than a documented gap.
+ */
+const REPAIR_WRITE_CALL =
+  /(?:writeFileSync|writeFile|appendFileSync|appendFile|renameSync|unlinkSync|rmSync|copyFileSync|mkdirSync|rmdirSync)\s*\(\s*(?:[A-Za-z_$][\w$]*\s*,\s*)?'([^']+)'/gu
+
+/** Where a repair is allowed to write: the host adapter layer, and the harness it runs inside. */
+function repairWriteAllowed(target        )          {
+  const normalised = target.replaceAll('\\', '/').replace(/^\.\//u, '')
+  if (normalised.startsWith('src/adapters/')) return true
+  if (normalised.startsWith('adapters/')) return true
+  if (/^harness[^/]*\.(?:ts|js|mjs)$/u.test(normalised)) return true
+  /** Absolute paths and anything outside this package are refused: a repair edits ITS OWN host adapter. */
+  return false
+}
+
+/** The first forbidden write target, or `undefined` when the repair stays inside R1. */
+function repairWriteViolation(source        )                     {
+  REPAIR_WRITE_CALL.lastIndex = 0
+  for (const match of source.matchAll(REPAIR_WRITE_CALL)) {
+    const target = match[1]
+    if (repairWriteAllowed(target)) continue
+    return `写入目标越界：${target}`
+  }
+  return undefined
+}
+
 /** How the supervisor decides the hosted mode is unwell. */
                               
                        
@@ -9975,6 +10031,28 @@ function createLauncher(options                 ) {
      */
     const source = extractToolSource(answer.text)
     if (source.length === 0) return { ...record, error: 'MODEL_EMPTY：模型没有输出任何内容' }
+
+    /**
+     * ── v1.4 (B4-0b-2 W3-4 ①): R1 WAS A PARAGRAPH IN A PROMPT, NOTHING CHECKED IT ─────────────────
+     *
+     * `SELF_HEALING_PROMPT.md` says R1 「只输出适配层的代码或命令，绝不要输出 src/protocol/」. Nothing
+     * enforced it: a model that ignored the sentence had its code COMPILED AND RUN, and the recipe for
+     * turning one host upgrade into a rewrite for every other host was executable by a typo.
+     *
+     * The check is deliberately narrow — it reads the WRITE TARGETS out of the repair source, not every
+     * path mentioned. A comment that says 「we are NOT touching src/protocol/」 is exactly the kind of
+     * prose that must not trip a gate (this batch has repaired that mistake three times), and a repair
+     * that only READS the protocol is legitimate: adapting to it is the whole job.
+     */
+    const violation = repairWriteViolation(source)
+    if (violation !== undefined) {
+      return {
+        ...record,
+        error:
+          `R1_VIOLATION：${violation}。修复只能改 src/adapters/ 与 harness*；` +
+          '改协议层能立刻让红变绿，代价是每个别的宿主和别的插件都要跟着改。已拒绝执行，本次未写入任何文件。',
+      }
+    }
 
     if (options.tools === undefined) {
       return { ...record, error: 'NO_TOOL_FACTORY：没有工具工厂，无法把修复编译成可执行工具' }
@@ -14302,6 +14380,15 @@ export {
   /** The dual-mode supervisor and the prompt its repairs are built from. */
   createLauncher,
   REPAIR_PROMPT,
+  /**
+   * ── v1.4 (W3-4 ①): R1 AS A PREDICATE, SHIPPED ────────────────────────────────────────────────
+   *
+   * Exported because the boundary it draws is a fact about the repair subsystem that a caller (or a
+   * test) must be able to check directly — 「只输出适配层的代码」 was a sentence in a prompt for a year
+   * and no one could ask it a question.
+   */
+  repairWriteAllowed,
+  repairWriteViolation,
   /**
    * THE NETWORK TIER, IMPLEMENTED — two HTTP endpoints and a client.
    *

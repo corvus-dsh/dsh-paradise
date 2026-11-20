@@ -64,6 +64,10 @@ export function createDshToolAdapter(ctx: any): ToolAdapter {
     },
 
     async execute(input): Promise<ToolOutcome> {
+      /**
+       * capability-optional: 缺它就返回 TOOL_REGISTRY_UNAVAILABLE 的具名错误（下一行），
+       * 不是静默成功 —— 所以它不需要成为 BOOT 必需项。
+       */
       const tools = service(ctx, 'tools', 'execute')
       if (tools === undefined || typeof tools.execute !== 'function') {
         return { isError: true, error: { code: 'TOOL_REGISTRY_UNAVAILABLE', message: 'tools.execute 不可用' } }

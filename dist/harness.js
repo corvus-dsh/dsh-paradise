@@ -1968,6 +1968,45 @@ function isUnresolved(text        )          {
  * path fails on the other, so there is now one implementation and both paths call it.
  */
 
+/**
+ * ── R1, AS EXECUTABLE CODE ────────────────────────────────────────────────────────────────────
+ *
+ * The prompt states R1 as a paragraph. A paragraph cannot refuse anything — this can.
+ *
+ * WHAT IT INSPECTS: the WRITE TARGETS in the repair source, i.e. the first string literal handed to a
+ * writing call (`writeFileSync`, `appendFileSync`, `renameSync`, `rmSync`, …). Not every path mentioned:
+ * a repair whose comment explains 「we are NOT touching src/protocol/」 must not trip the gate, and a
+ * repair that READS the protocol is legitimate — adapting to it is the entire job.
+ *
+ * WHAT IT DOES NOT CATCH, AND SAYS SO: a repair that builds its target path at runtime
+ * (`path.join(dir, name)`) cannot be classified statically. This is a WHITELIST of what may be written,
+ * not a sandbox; the actual write still has to be correct. Stating the limit is cheaper than a
+ * heuristic that misfires — and a misfiring gate gets switched off, which is worse than a documented gap.
+ */
+const REPAIR_WRITE_CALL =
+  /(?:writeFileSync|writeFile|appendFileSync|appendFile|renameSync|unlinkSync|rmSync|copyFileSync|mkdirSync|rmdirSync)\s*\(\s*(?:[A-Za-z_$][\w$]*\s*,\s*)?'([^']+)'/gu
+
+/** Where a repair is allowed to write: the host adapter layer, and the harness it runs inside. */
+function repairWriteAllowed(target        )          {
+  const normalised = target.replaceAll('\\', '/').replace(/^\.\//u, '')
+  if (normalised.startsWith('src/adapters/')) return true
+  if (normalised.startsWith('adapters/')) return true
+  if (/^harness[^/]*\.(?:ts|js|mjs)$/u.test(normalised)) return true
+  /** Absolute paths and anything outside this package are refused: a repair edits ITS OWN host adapter. */
+  return false
+}
+
+/** The first forbidden write target, or `undefined` when the repair stays inside R1. */
+function repairWriteViolation(source        )                     {
+  REPAIR_WRITE_CALL.lastIndex = 0
+  for (const match of source.matchAll(REPAIR_WRITE_CALL)) {
+    const target = match[1]
+    if (repairWriteAllowed(target)) continue
+    return `写入目标越界：${target}`
+  }
+  return undefined
+}
+
 /** How the supervisor decides the hosted mode is unwell. */
                               
                        
@@ -2205,6 +2244,28 @@ function createLauncher(options                 ) {
      */
     const source = extractToolSource(answer.text)
     if (source.length === 0) return { ...record, error: 'MODEL_EMPTY：模型没有输出任何内容' }
+
+    /**
+     * ── v1.4 (B4-0b-2 W3-4 ①): R1 WAS A PARAGRAPH IN A PROMPT, NOTHING CHECKED IT ─────────────────
+     *
+     * `SELF_HEALING_PROMPT.md` says R1 「只输出适配层的代码或命令，绝不要输出 src/protocol/」. Nothing
+     * enforced it: a model that ignored the sentence had its code COMPILED AND RUN, and the recipe for
+     * turning one host upgrade into a rewrite for every other host was executable by a typo.
+     *
+     * The check is deliberately narrow — it reads the WRITE TARGETS out of the repair source, not every
+     * path mentioned. A comment that says 「we are NOT touching src/protocol/」 is exactly the kind of
+     * prose that must not trip a gate (this batch has repaired that mistake three times), and a repair
+     * that only READS the protocol is legitimate: adapting to it is the whole job.
+     */
+    const violation = repairWriteViolation(source)
+    if (violation !== undefined) {
+      return {
+        ...record,
+        error:
+          `R1_VIOLATION：${violation}。修复只能改 src/adapters/ 与 harness*；` +
+          '改协议层能立刻让红变绿，代价是每个别的宿主和别的插件都要跟着改。已拒绝执行，本次未写入任何文件。',
+      }
+    }
 
     if (options.tools === undefined) {
       return { ...record, error: 'NO_TOOL_FACTORY：没有工具工厂，无法把修复编译成可执行工具' }

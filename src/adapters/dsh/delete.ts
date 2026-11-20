@@ -63,6 +63,10 @@ export async function deleteSession(ctx: any, sessionId: string, reason: string)
   const warnings: string[] = []
   const persistence = service(ctx, 'sessionPersistence', 'create')
   const persistenceAny = service(ctx, 'sessionPersistence')
+  /**
+   * capability-optional: 缺它时下面的 live-store 分支整段跳过，而**删除本身仍由 stat 前后各核一次**
+   * （artifactPresence），回执里写的是「核实过」，不是「接口调过」。所以它不是 BOOT 必需项。
+   */
   const sessions = service(ctx, 'sessions', 'get')
 
   const before = await artifactPresence(persistenceAny, sessionId)

@@ -206,6 +206,11 @@ export async function createSession(ctx: any, options: CreateOptions): Promise<W
     return fail('arguments', 'NO_CONTENT', '没有要注入的内容：会话不能在没有内容的情况下诞生')
   }
 
+  /**
+   * capability-optional: 下一行自己用 `typeof prepare !== 'function'` 拒绝（SESSIONS_UNAVAILABLE），
+   * 所以宿主没有 `sessions.get` 时不会静默降级。它之所以不是 BOOT 必需项：引导时会说清楚「不允许
+   * 准备零继承会话」，这句拒绝就是它的能力报告。
+   */
   const sessions = service(ctx, 'sessions', 'get')
   if (typeof sessions !== 'object' || sessions === null || typeof (sessions as any).prepare !== 'function') {
     return fail('prepare', 'SESSIONS_UNAVAILABLE', 'sessions.prepare 不可用：宿主不允许准备零继承会话')
@@ -426,6 +431,10 @@ export async function createSession(ctx: any, options: CreateOptions): Promise<W
     /* publishing: best effort, and REPORTED rather than assumed */
     stage = 'publish'
     const shouldPublish = options.publish !== false
+    /**
+     * capability-optional: 只在**发布**阶段解析（`publish !== false`），缺它就是「这个宿主没有
+     * workspace 注册表、发布跳过」，下面的 typeof 守卫挡住，回执里写明哪一段没做。不是 BOOT 必需项。
+     */
     const registry = shouldPublish ? service(ctx, 'workspaceRegistry', 'resolveByPath') : undefined
     if (typeof registry === 'object' && registry !== null && typeof (registry as any).resolveByPath === 'function') {
       try {

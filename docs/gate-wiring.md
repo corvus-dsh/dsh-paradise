@@ -28,22 +28,43 @@
 回答的是**同一个问题**，它们不该有四个版本 —— 四个版本就是四次漂移的机会，
 而 observer 与 graft 上一轮已经因此各修过一次同一个缺陷（`families` 的成员正则漏 `let/var`）。
 
-实测哈希（`Get-FileHash -Algorithm SHA256`，前 16 位）：
+实测哈希（SHA-256 前 16 位）—— **不是手抄的**：
 
 ```
 closure.mjs          6AB8FDB73B4E4CB6   == memory
 check-cycles.mjs     5B061466C7F3BCAD   == memory
-type-budget.mjs      9793ED9E01D59CB8   == memory
 type-check.mjs       00E63B64EFC9A9BF   == memory
 families.mjs         EE5F3FDB9EC68652   == memory
 who-references.mjs   5B0080DFE9F02D27   == memory
 move-gate.mjs        A7784C85DAFCBBBA   == memory
 ```
 
-**唯一的例外是 `type-budget.mjs` 的两张基线表**：`BASELINE` / `BASELINE_IDENTITIES`
-是**每仓各自的**（它们记的是本仓的缺陷），必须由 `--baseline` 生成本仓的值。
-复制过来后立刻用 `--baseline` 重写了这两块 —— 除此之外一行未动。
-这条在报告里如实写明，因为「逐字节相同」与「基线是本地数据」必须分开说，否则就是假证据。
+**`type-budget.mjs` 不在上面那张表里，而且不能进去。** 结构同源，**基线本地**：
+
+```
+type-budget.mjs      paradise 00452631762B0E5D ≠ memory 40F8E5C0092658E0
+                     ↑ 同样的代码逻辑，不同的 BASELINE / BASELINE_IDENTITIES
+```
+
+`BASELINE` / `BASELINE_IDENTITIES` 记的是**本仓的缺陷**，必须由 `--baseline` 生成本仓的值；
+复制过来后立刻用 `--baseline` 重写了这两块，其余一行未动。
+
+> ── W3-2：这行原来写的是 `9793ED9E01D59CB8 == memory`（B4-0b-2 W3-2）
+>
+> 那个哈希**两边都不是**：既不是 paradise 的，也不是 memory 的。它不是抄错了一位，是抄的是
+> 一个第三个文件，或者一次已经被后来的编辑改掉的状态 —— 无论哪种，它**从来没有等于过任何一个
+> 实测值**，而它就写在「实测哈希」这四个字下面。
+>
+> 这一行之所以能活这么久，是因为**没有任何东西比对过它**：文档里的数字只有作者本人一个来源。
+> 这正是 W1-12 里「检查的来源只有一处更新」那个形态，只不过这次连检查都没有 —— 只有一句声明。
+>
+> 修法有两条，都做了：
+>   1. **这句话改成它真正是的东西**：结构同源、基线本地，两个哈希都是实测值，且写明「不相等」；
+>   2. **数字改由脚本比对**：`test/v277-gate-wiring-hashes.test.mjs` 解析上面两个代码块，
+>      逐行 `sha256sum` 实测，`== memory` 的必须真相等，`≠` 的必须真不等。
+>      任何人手工改一个字节（或手抄一个数字），这条测试就红。
+>
+> 判据：改 `type-budget.mjs` 一个字节 ⇒ v277 红；把 `== memory` 改成 `≠` ⇒ 也红（那是在撒谎）。
 
 ## 三、`type-budget` 在本仓的处置（重要，不要简化）
 

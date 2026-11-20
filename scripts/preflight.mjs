@@ -239,27 +239,69 @@ try {
   const memory = mod.createMemoryHost()
   if (mod.isParadiseHost(memory) !== true) fail('the shipped reference host does not satisfy isParadiseHost')
   else ok('the shipped reference host satisfies the protocol')
+
+  /**
+   * ── v1.4 (B4-0b-2 W3-1): A REFUSAL IS BEHAVIOUR, NOT TWO WORDS IN THE ARTIFACT ─────────────────
+   *
+   * THE OLD CHECK WAS `/writeNotImplemented|NOT_IMPLEMENTED/` ON THE BUNDLE TEXT — and a COMMENT
+   * satisfied it: this very file's docstring contains both words, and so does the contract's header.
+   * The check therefore stayed green on a build where the function had been deleted and the words
+   * merely survived in prose. That is the family this batch has now recorded three times:
+   * 「检查只看文件里的子串 ⇒ 被注释满足」.
+   *
+   * What a refusal IS: calling it throws, with the code, and the message names what was refused. So
+   * that is what is measured here, through the SHIPPED barrel — the artifact, not the source.
+   */
+  if (typeof mod.writeNotImplemented !== 'function') {
+    fail('index.js does not export writeNotImplemented — the unimplemented-write refusal is gone')
+  } else {
+    let thrown = null
+    try {
+      mod.writeNotImplemented('preflight probe 「写路径契约」')
+    } catch (error) {
+      thrown = error
+    }
+    if (thrown === null) {
+      fail(
+        'writeNotImplemented RETURNED instead of throwing — an unimplemented write that answers is the ' +
+          'false-success class this package exists to remove',
+      )
+    } else if (thrown.code !== 'NOT_IMPLEMENTED') {
+      fail(`writeNotImplemented threw the wrong code: ${String(thrown.code)} ≠ NOT_IMPLEMENTED`)
+    } else if (!String(thrown.message ?? '').includes('preflight probe')) {
+      fail('writeNotImplemented threw but did not name what it refused — the message is not about the call')
+    } else {
+      ok('writeNotImplemented THROWS code NOT_IMPLEMENTED (measured by calling it, not by substring)')
+    }
+  }
 } catch (error) {
   fail(`importing index.js threw: ${String(error?.message ?? error)}`)
 }
 
 /* ── 7. the write layer must be REACHABLE, and must still refuse honestly ── */
 /**
- * TWO CHECKS, BECAUSE BOTH HALVES CAN REGRESS IN OPPOSITE DIRECTIONS.
+ * THE REFUSAL ITSELF IS MEASURED ABOVE, BY CALLING IT (W3-1). What remains here is one TOKEN check,
+ * and it says so in its own words — because a token check dressed as a behaviour check is the defect
+ * this section used to have.
  *
- *   - the machinery must exist in the artifact (a refactor that drops `deleteSession` from the barrel
- *     silently breaks every plugin's rollback);
- *   - the two refusal paths must still be present. `writeNotImplemented` guards the still-unbuilt P3
- *     pieces, and `NOT_WIRED` guards the verbs that are unavailable on a given host PROFILE — a quiet
- *     success in either place is the false-success pattern this package removes.
+ * KNOWN LIMIT (stated, not hidden): `NOT_WIRED` is profile-dependent — producing it needs a host
+ * MISSING the verb, which the reference host used below deliberately is not. So this line proves the
+ * refusal TOKEN still exists in the artifact; it does NOT prove the refusal fires. The behavioural
+ * proof lives in the test suite (`v276`), where a host missing a capability is cheap to build.
  */
-if (/writeNotImplemented|NOT_IMPLEMENTED/u.test(bundle)) ok('the P3 contract still refuses with NOT_IMPLEMENTED')
-else fail('the P3 write contract no longer refuses — an unimplemented path that returns ok:true is a false success')
+if (/NOT_WIRED/u.test(bundle)) ok('the NOT_WIRED refusal token is present in the artifact (token only — see the test for the behaviour)')
+else fail('the profile-dependent refusal token is gone — a missing capability would now look like a quiet success')
 
-if (/NOT_WIRED/u.test(bundle)) ok('an unavailable verb still refuses with NOT_WIRED (profile-dependent)')
-else fail('the profile-dependent refusal is gone — a missing capability would now look like a quiet success')
-
-/* ── 8. the host adapter must still confess what it cannot do ────────────── */
+/* ── 8. (removed) ────────────────────────────────────────────────────────── */
+/**
+ * This heading used to read 「the host adapter must still confess what it cannot do」 and NOTHING
+ * followed it — a section that promises a check and performs none. A reader who scans the section
+ * titles believes the adapter's confessions are verified; they were not (B4-0b-2 W3-1).
+ *
+ * The honest options were "write the check" or "delete the title". The capability report's behaviour
+ * is now covered where it can be measured — `test/v276-write-contract-refusal.test.mjs` drives a host
+ * that is MISSING a verb and asserts the refusal, which is the confession itself. So the title goes.
+ */
 
 console.log('PREFLIGHT — dsh-paradise\n')
 for (const line of checked) console.log(`  OK   ${line}`)

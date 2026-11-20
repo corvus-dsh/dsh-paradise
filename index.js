@@ -832,16 +832,26 @@ class ParadiseUnavailableError extends ParadiseError {
 }
 
 /**
- * WRITE — the session-writing layer. **P2: contract only, deliberately unimplemented.**
+ * WRITE — the written contract for the session-writing layer, plus the refusal for what it does not do.
  *
- * WHY THIS FILE EXISTS WITH NO IMPLEMENTATION
+ * ── THE HEADER USED TO SAY 「P2: contract only, deliberately unimplemented」 ────────────────────
  *
- * The draft (§4) names the layout `write/skeleton.ts`, `write/tape.ts`, `write/persistence.ts`,
- * `write/rollback.ts`, and §5 puts them in P2 — after the read layer is proven. What ships here is
- * the CONTRACT those modules will satisfy, so P2 starts from a decision instead of a discussion.
+ * That was true when it was written and stopped being true when the machinery landed: the write path
+ * lives in `../adapters/dsh/session-writer.ts` (prepare → build → validate → create → append → flush
+ * → close → cold-read verify) and `../adapters/dsh/delete.ts` (delete, then verify by `stat`). A
+ * header that still says "unimplemented" is the documentation form of the false success this batch
+ * keeps removing: it tells a reader the write layer will refuse, so nobody looks for the refusal.
  *
- * WHAT MUST BE TRUE WHEN THIS IS IMPLEMENTED (draft §6.1 — the stricter existing implementation wins
- * each row):
+ * WHAT THIS FILE IS NOW:
+ *   · `WRITE_LAYER_PHASE` — how far the contract has been SATISFIED, read by callers deciding whether
+ *     to use the write path at all;
+ *   · `CARRYING_MESSAGE_RULE` — the one rule about the message a plugin writes;
+ *   · `writeNotImplemented(what)` — the refusal for verbs that are STILL unimplemented. It throws, and
+ *     `scripts/preflight.mjs` now measures that by CALLING it (B4-0b-2 W3-1): a comment containing the
+ *     words `NOT_IMPLEMENTED` used to satisfy the old substring check, which is why the check was
+ *     wrong and not merely old.
+ *
+ * WHAT MUST BE TRUE OF ANY WRITE PATH (draft §6.1 — the stricter existing implementation wins each row):
  *
  *   1. WRITE-THEN-VERIFY uses the FULL validator, never "just compare count/seq/type". graft's
  *      `assertColdLog` and observer's `assertInjectTape` both do the full pass; the loose version

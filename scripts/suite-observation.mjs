@@ -105,9 +105,26 @@ function inputDigest(REPO) {
     }
   }
   /**
-   * THE PACKAGE'S OWN `test` SCRIPT IS PART OF THE INPUT: changing it changes what runs, and a cache
-   * that ignored it would serve a stale count after someone edited the command.
+   * ── THE GATE SCRIPTS ARE PART OF THE INPUT TOO (measured, and this one cost a whole debug round) ─
+   *
+   * The digest covered `test/**` + `package.json` + the Node version. Then `check-readme-counts.mjs`
+   * was edited to call this module, the cache still matched (no test file had changed), and the gate
+   * kept reporting **five failures from a run that happened BEFORE the fix** — a stale observation
+   * presented as a current verdict, which is precisely the defect this batch keeps finding.
+   *
+   * The gate scripts feed `test/*.test.mjs` through `execFileSync`, so their bytes change what the
+   * suite reports. They are therefore inputs, and they belong in the key. This also means a
+   * half-finished edit can never be masked by a cached answer from the previous version.
    */
+  try {
+    const scripts = readdirSync(join(REPO, 'scripts')).filter((name) => name.endsWith('.mjs')).sort()
+    for (const name of scripts) {
+      const stat = statSync(join(REPO, 'scripts', name))
+      parts.push(`scripts/${name}:${stat.size}:${Math.trunc(stat.mtimeMs)}`)
+    }
+  } catch {
+    /** No scripts/ directory (a stub skeleton): nothing to add. */
+  }
   try {
     const pkg = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'))
     parts.push(`script:${pkg?.scripts?.test ?? ''}`)
@@ -187,7 +204,24 @@ export function observeSuite(options = {}) {
   if (options.fresh !== true && existsSync(CACHE)) {
     try {
       const stored = JSON.parse(readFileSync(CACHE, 'utf8'))
-      if (stored?.digest === digest && typeof stored.tap === 'string' && stored.tap.length > 0) {
+      /**
+       * ── THE TAP ITSELF IS VERIFIED, NOT JUST THE INPUTS (measured) ────────────────────────────
+       *
+       * The first version trusted `tap` whenever the INPUT digest matched. Measured by `v274b ③`:
+       * editing only the stored `tap` (leaving the digest untouched) made the gates read a forged
+       * GREEN for a suite that had failed — the false-success class, produced by the cache that
+       * exists to save time.
+       *
+       * The digest covers the tree; `tap` needs its own checksum, or the cache is only as trustworthy
+       * as the file's immutability. Both are checked; either mismatch is a MISS.
+       */
+      const tapDigest = createHash('sha256').update(String(stored?.tap ?? '')).digest('hex')
+      if (
+        stored?.digest === digest &&
+        typeof stored.tap === 'string' &&
+        stored.tap.length > 0 &&
+        stored.tapDigest === tapDigest
+      ) {
         return { tap: stored.tap, index: indexTap(stored.tap), cached: true }
       }
     } catch {
@@ -253,9 +287,10 @@ export function observeSuite(options = {}) {
     try {
       mkdirSync(dirname(CACHE), { recursive: true })
       const temp = `${CACHE}.tmp-${process.pid}`
-      writeFileSync(temp, JSON.stringify({ digest, tap }), 'utf8')
+      const payload = JSON.stringify({ digest, tap, tapDigest: createHash('sha256').update(tap).digest('hex') })
+      writeFileSync(temp, payload, 'utf8')
       rmSync(CACHE, { force: true })
-      writeFileSync(CACHE, JSON.stringify({ digest, tap }), 'utf8')
+      writeFileSync(CACHE, payload, 'utf8')
       rmSync(temp, { force: true })
     } catch {
       /** An unwritable cache costs time on the next gate, never correctness. */

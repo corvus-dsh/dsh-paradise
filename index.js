@@ -10006,7 +10006,27 @@ function createLauncher(options                 ) {
       if (health.ok) {
         failures = 0
         lastReport = ''
-        if (state === 'degraded') transition('hosted', '探针恢复健康')
+        /**
+         * ── v1.4 (B4-0b-2 W3-3): `gave-up` IS NOT A TOMBSTONE ────────────────────────────────────
+         *
+         * The guard used to be `state === 'degraded'`, so `gave-up` was terminal: the supervisor kept
+         * probing (that is deliberate — a recovery must still be noticed) and then threw the notice
+         * away. Measured consequence: a host that gave up after its repair budget was spent stayed
+         * `gave-up` FOREVER, even after the thing it depends on came back by itself. The state said
+         * 「需要人介入」 about a situation a human had already resolved, and the only way out was a
+         * restart — the failure this whole package exists to remove, produced by the recovery path.
+         *
+         * If the probe says healthy and we are not hosted, we ARE hosted. Say it, and clear the reason
+         * so an operator does not read a stale explanation under a healthy state.
+         */
+        if (state !== 'hosted') {
+          const from = state
+          transition(
+            'hosted',
+            from === 'gave-up' ? '探针自行恢复（放弃修复后宿主自己好了）' : '探针恢复健康',
+          )
+          gaveUpReason = undefined
+        }
         return
       }
 
@@ -10023,7 +10043,21 @@ function createLauncher(options                 ) {
        */
       if (attempts.length >= maxRepairAttempts) {
         if (state !== 'gave-up') {
-          gaveUpReason = `${attempts.length} 次修复尝试后仍未恢复：${attempts[attempts.length - 1]?.error ?? '未知'}`
+          /**
+           * ── v1.4 (W3-3): `0 次修复尝试后仍未恢复：未知` WAS A SENTENCE NOBODY COULD READ ─────────
+           *
+           * With `maxRepairAttempts: 0` the budget is exhausted on the FIRST failing tick, so
+           * `attempts` is empty and `attempts[attempts.length - 1]?.error` is `undefined` — the reason
+           * read 「0 次修复尝试后仍未恢复：未知」, which describes a UNKNOWN failure when the actual
+           * situation is a DELIBERATE configuration: no repair was ever allowed to run.
+           *
+           * The distinction matters to whoever reads the state: "the repair failed" sends them to the
+           * repair tool, "repair is disabled" sends them to the config. Same state, different next step.
+           */
+          gaveUpReason =
+            attempts.length === 0
+              ? `未尝试修复（上限 ${maxRepairAttempts}）：探针持续失败（${health.reason}）——这是配置，不是未知故障`
+              : `${attempts.length} 次修复尝试后仍未恢复：${attempts[attempts.length - 1]?.error ?? '未知'}`
           transition('gave-up', gaveUpReason)
         }
         return

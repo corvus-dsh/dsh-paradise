@@ -60,6 +60,51 @@ const fresh = composeBundle(root).output
 if (fresh !== bundle) fail('index.js differs from a fresh build — run `node scripts/build.mjs`')
 else ok(`index.js is byte-identical to a fresh build (${Buffer.byteLength(bundle)} bytes)`)
 
+/**
+ * ── 4b. DIST MUST BE FRESH TOO (B4-0b-2 W1-10) ────────────────────────────────────────────────
+ *
+ * THE MEASURED FAILURE THIS BLOCKS. A change landed in `src/`, `npm test` went green locally because the
+ * tests import `index.js`, and CI's `Gates` job went RED — because `dist/harness.js` is a COMMITTED build
+ * artifact and had not been regenerated. The local run could not see it: nothing local compared the
+ * committed artifact with a fresh build.
+ *
+ * Note the shape, which is the same one this batch keeps finding: the local check answered a question
+ * about SOURCES while the failing question was about the ARTIFACT. `index.js` had this check from the
+ * beginning; `dist/harness.js` did not — so the gap was not "no freshness check", it was "a freshness
+ * check that covered one of the two artifacts".
+ *
+ * The composition is recomputed here with the same entry the build script uses, and compared byte for
+ * byte. Anything else (mtimes, sizes) would let a one-character change through.
+ */
+const harnessPath = join(root, 'dist/harness.js')
+let harnessCommitted
+try {
+  harnessCommitted = readFileSync(harnessPath, 'utf8')
+} catch {
+  fail('dist/harness.js is missing — run `node scripts/build-harness.mjs`')
+}
+if (harnessCommitted !== undefined) {
+  const { composeHarness } = await import('./build-harness.mjs')
+  if (typeof composeHarness !== 'function') {
+    fail('build-harness.mjs does not export composeHarness — preflight cannot verify dist/ freshness')
+  } else {
+    /**
+     * `composeHarness` returns `{ output, names }` — the module list is handed back for the build script's
+     * own message, and treating the object as the string would compare "object vs text", which is never
+     * equal. The FIRST version of this block did exactly that and reported a stale artifact on a tree that
+     * had just been rebuilt.
+     */
+    const freshHarness = composeHarness(root)?.output
+    if (typeof freshHarness !== 'string') {
+      fail('composeHarness returned no output string — preflight cannot verify dist/ freshness')
+    } else if (freshHarness !== harnessCommitted) {
+      fail('dist/harness.js differs from a fresh build — run `node scripts/build-harness.mjs`')
+    } else {
+      ok(`dist/harness.js is byte-identical to a fresh build (${Buffer.byteLength(harnessCommitted)} bytes)`)
+    }
+  }
+}
+
 /* ── 5. THE PROTOCOL MUST REACH THE ARTIFACT UNCONTAMINATED ──────────────── */
 /**
  * THE ONE CHECK THIS PACKAGE CANNOT SKIP.

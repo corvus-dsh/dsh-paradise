@@ -7864,10 +7864,74 @@ const SANDBOX_CAPABILITIES                      = Object.freeze({
  * behind — a failure that only shows up the first time a repair actually runs. A string cannot drift
  * from its caller.
  */
+/**
+ * ── B4-B B9: A CREDENTIAL IS NOT CONTENT, EVEN INSIDE THE ALLOWLIST ──────────────────────────
+ *
+ * The allowlist answers 「may this process look here」. It does not answer 「should this TEXT leave the
+ * file」, and those two questions have different answers for exactly one kind of file: the harness's
+ * own config.json, which stores apiKey / fallbackApiKey as PLAINTEXT and lives at
+ * join(homeDir, 'config.json') while homeDir is the FIRST sandbox root (harness.ts:180).
+ *
+ * Measured before this fix: readWithin(configPath, [homeDir]) returned {"apiKey":"sk-…"} — so a
+ * model-authored self-repair script under the restricted API could api.readFile the key and then put
+ * it anywhere it liked: the repair report, a commit message, an outbound request.
+ *
+ * THE REDACTION IS STRUCTURAL, NOT TEXTUAL: it parses the JSON and replaces the VALUE of any key whose
+ * name names a secret, leaving the key and the file's shape intact — the repair path needs to know
+ * whether a key is CONFIGURED, never what its characters are. A flat regex over the raw text would
+ * still leak on a file that is not valid JSON, so an unparseable JSON-looking file is withheld whole.
+ *
+ * ONE IMPLEMENTATION, TWO SEAMS: the body below is serialized into the worker and called directly on
+ * the main thread by readWithin. It carries no TypeScript annotations because the worker copy is
+ * evaluated as plain JS; redactCredentials() is the typed wrapper.
+ */
+const CREDENTIAL_SCRUBBER_SOURCE = String.raw`(function () {
+  var SECRET = /(api[-_]?key|secret|token|password|passwd|credential|authorization)/iu
+  var REDACTED = '***redacted-by-sandbox***'
+  function scrub(value) {
+    if (Array.isArray(value)) return value.map(scrub)
+    if (value === null || typeof value !== 'object') return value
+    var out = {}
+    Object.keys(value).forEach(function (key) {
+      var inner = value[key]
+      out[key] = SECRET.test(key) && typeof inner === 'string' && inner.length > 0 ? REDACTED : scrub(inner)
+    })
+    return out
+  }
+  return function redact(target, text) {
+    /**
+     * SINGLE backslashes: inside String.raw they stay single, so the regex is
+     *   /\\/  -> one literal backslash
+     *   /\\.json$/  -> dot, "json", end
+     * Writing them doubled here (as a JSON escape habit suggests) compiles to a regex that matches a
+     * LITERAL BACKSLASH, never a dot — measured: every config.json was passed through untouched while
+     * the code looked right.
+     */
+    var base = String(target).replace(/\\/gu, '/').split('/').pop() || ''
+    if (!/\.json$/iu.test(base)) return text
+    var parsed
+    try {
+      parsed = JSON.parse(text)
+    } catch (e) {
+      return REDACTED
+    }
+    return JSON.stringify(scrub(parsed), null, 2) + String.fromCharCode(10)
+  }
+})()`
+
+const redactCredentialsImpl = (0, eval)(CREDENTIAL_SCRUBBER_SOURCE)
+
+function redactCredentials(target        , text        )         {
+  return redactCredentialsImpl(target, text)          
+}
+
 const WORKER_SOURCE = `
 const { parentPort, workerData } = require('node:worker_threads')
 const fs = require('node:fs')
 const path = require('node:path')
+
+/** B4-B B9 — the credential scrubber, INJECTED as source so both seams share one body. */
+const REDACT = (${CREDENTIAL_SCRUBBER_SOURCE})
 
 /**
  * THE ALLOWLIST IS ENFORCED HERE, in the bootstrap — not in the tool, and not in the caller.
@@ -7970,7 +8034,8 @@ function deny(op, target) {
 const api = {
   readFile(target) {
     if (!within(target)) deny('read', target)
-    return fs.readFileSync(String(target), 'utf8')
+    /** B4-B B9: the allowlist says WHERE; the scrubber decides WHAT may leave. */
+    return REDACT(String(target), fs.readFileSync(String(target), 'utf8'))
   },
   writeFile(target, content) {
     if (!within(target)) deny('write', target)
@@ -8225,7 +8290,12 @@ function isWithinRootsResolved(target        , roots                   )        
 function readWithin(target        , roots                   , maxBytes = 60_000)         {
   if (!isWithinRootsResolved(target, roots)) throw new Error(`SANDBOX_DENIED: read ${target}`)
   const text = readFileSync(resolve(target), 'utf8')
-  return text.length > maxBytes ? `${text.slice(0, maxBytes)}\n…（已截断，原文件 ${text.length} 字节）` : text
+  /**
+   * B4-B B9: THE SAME REDACTION AS THE WORKER API, and the reason both are needed is that this is
+   * the seam that carries file text straight into a MODEL PROMPT — no scripting required to leak.
+   */
+  const redacted = redactCredentials(target, text)
+  return redacted.length > maxBytes ? `${redacted.slice(0, maxBytes)}\n…（已截断，原文件 ${redacted.length} 字节）` : redacted
 }
 
 /** List a directory for the emergency prompt, refusing anything outside the roots. */

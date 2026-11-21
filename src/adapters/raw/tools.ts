@@ -158,7 +158,8 @@ export function createRawToolFactory(options: RawToolFactoryOptions = {}): ToolF
           parameters: { type: 'object', additionalProperties: true },
           async execute(args: Record<string, unknown>) {
             const result = await spawnSandbox(source, args, { roots: sandboxRoots as readonly string[], timeoutMs })
-            if (result.ok) return { isError: false, value: result.value }
+            /** B4-B B0b — same rule as the in-process branch below: an absent value is an absent key. */
+            if (result.ok) return result.value === undefined ? { isError: false } : { isError: false, value: result.value }
             return asToolError(result.error?.code ?? 'TOOL_FAILED', result.error?.message ?? 'sandbox failed')
           },
         }
@@ -217,7 +218,18 @@ export function createRawToolFactory(options: RawToolFactoryOptions = {}): ToolF
              * behave differently from one that is not — a caller cannot tell, and should not have to.
              */
             const value = await (body.execute as (a: Record<string, unknown>) => unknown)(args)
-            return { isError: false, value }
+            /**
+             * ── B4-B B0b: A TOOL THAT RETURNS NOTHING IS THE COMMON CASE, NOT AN EDGE ────────────
+             *
+             * `return { isError: false, value }` with `value === undefined` creates an OWN `undefined`
+             * key. `JSON.stringify` drops it, so it looks like `{ isError: false }` everywhere a test can
+             * see — but the host validates tool return values as LOSSLESS JSON and rejects the whole
+             * call. Measured: a body of `api.writeFile(p, c)` (writes a file, returns nothing — the most
+             * natural repair script there is) produced `$.value = undefined`.
+             *
+             * An absent `value` must be an ABSENT KEY, which is what the spread produces.
+             */
+            return value === undefined ? { isError: false } : { isError: false, value }
           } catch (error) {
             return asToolError('TOOL_THREW', String((error as any)?.message ?? error))
           }
@@ -250,7 +262,8 @@ export function createRawToolFactory(options: RawToolFactoryOptions = {}): ToolF
         const source = sources.get(name)
         if (source === undefined) return asToolError('TOOL_SOURCE_MISSING', `工具 ${name} 的源码没有被保留，无法在沙箱中重跑`)
         const result = await spawnSandbox(source, args, { roots: sandboxRoots as readonly string[], timeoutMs })
-        if (result.ok) return { isError: false, value: result.value }
+        /** B4-B B0b — same rule on the re-run path: an absent value is an absent key. */
+        if (result.ok) return result.value === undefined ? { isError: false } : { isError: false, value: result.value }
         return asToolError(result.error?.code ?? 'TOOL_FAILED', result.error?.message ?? 'sandbox failed')
       }
 

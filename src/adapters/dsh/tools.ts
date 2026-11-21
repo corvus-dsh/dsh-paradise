@@ -92,7 +92,17 @@ export function createDshToolAdapter(ctx: any): ToolAdapter {
             },
           }
         }
-        return { isError: false, value: result !== null && typeof result === 'object' && 'value' in result ? result.value : result }
+        /**
+         * B4-B B0b — AN ABSENT VALUE IS AN ABSENT KEY, here as well.
+         *
+         * `{ isError: false, value: undefined }` is not lossless JSON: `JSON.stringify` drops the key so
+         * it looks like `{ isError: false }`, but the host rejects the whole tool call. This adapter is
+         * the seam between a repair tool and the host, so it is the LAST place the shape can be fixed —
+         * and the one where getting it wrong costs the most.
+         */
+        const inner =
+          result !== null && typeof result === 'object' && 'value' in result ? (result as { value?: unknown }).value : result
+        return inner === undefined ? { isError: false } : { isError: false, value: inner }
       } catch (error) {
         // UNKNOWN is a failure, and a failure is a RESULT here — never an exception escaping the
         // adapter, because the caller has a receipt to fill in and a user waiting for it.

@@ -29,15 +29,64 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import * as sandbox from '../src/adapters/raw/sandbox.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SANDBOX_SOURCE = readFileSync(join(HERE, '..', 'src', 'adapters', 'raw', 'sandbox.ts'), 'utf8')
+
+/**
+ * ── THE SCAN, AND WHY IT IS A SEPARATE PREDICATE ────────────────────────────────────────────
+ *
+ * `hasLexicalBoundary` answers one question about SOURCE TEXT: does this file build a containment
+ * check out of `resolve()` plus a `startsWith(root…)` comparison — i.e. a boundary that a junction can
+ * walk through?
+ *
+ * It is excluded from comment lines for the reason this batch learned three times: a check that a
+ * comment can satisfy is not a check, and equally one that a comment can TRIP is a check people delete.
+ * The two predicates in `sandbox.ts` are named in the whitelist, because their job is to be that
+ * comparison.
+ */
+const LEXICAL_SHAPE = /startsWith\([^)]*root[^)]*\)|startsWith\(`\$\{[^}]*root[^}]*\}/u
+
+export function hasLexicalBoundary(source) {
+  const code = String(source)
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*(?:\/\/|\/\*|\*)/u.test(line))
+    .join('\n')
+  return LEXICAL_SHAPE.test(code) && /\bresolve\s*\(/u.test(code)
+}
+
+/**
+ * Files under `src/` that still build a lexical containment boundary.
+ *
+ * `adapters/raw/sandbox.ts` is exempt **by name and for one reason**: it DEFINES the two predicates,
+ * and the lexical one exists on purpose as a pre-check whose caller re-checks with the realpath one.
+ * Everything else that appears here is a call site that lost the strong check.
+ */
+export function lexicalBoundaryOffenders(root = join(HERE, '..', 'src')) {
+  const exempt = new Set([join('adapters', 'raw', 'sandbox.ts')])
+  const offenders = []
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(path)
+        continue
+      }
+      if (!entry.name.endsWith('.ts')) continue
+      const rel = relative(root, path)
+      if (exempt.has(rel)) continue
+      if (hasLexicalBoundary(readFileSync(path, 'utf8'))) offenders.push(rel.split('\\').join('/'))
+    }
+  }
+  walk(root)
+  return offenders.sort()
+}
 
 const PAYLOAD = 'SECRET-OUTSIDE-SANDBOX'
 
@@ -158,6 +207,48 @@ test('known-limit ⑤: 静态 —— 真读/真写路径不得引用词法版', 
     assert.match(body, /isWithinRootsResolved/u, `${fn} 必须用 realpath 版判据`)
     assert.equal(/isWithinRootsLexical/u.test(body), false, `${fn} 不许用词法版 —— 那就是这一条要修的东西`)
   }
+})
+
+test('known-limit ⑤b: 扫描面是**全 `src/`**，不是只有 sandbox.ts（B4-B B4）', () => {
+  /**
+   * ── WHY THIS CASE EXISTS AT ALL ─────────────────────────────────────────────────────────────
+   *
+   * ⑤ above is correct and useless for the defect it was meant to prevent: it reads TWO FUNCTION
+   * BODIES inside ONE FILE. `src/repair-session.ts`'s `resolveInside` carried the same weak shape —
+   * `resolve()` + `startsWith(root + sep)` — from before W1-1 until B4-B, and **nothing failed**,
+   * because the check never looked at that file.
+   *
+   * That is the 「修一份拷贝」 shape one level up: the guard was fixed, the guarded SURFACE was not.
+   *
+   * So this case scans every `.ts` under `src/` for the lexical boundary pattern, and the only
+   * permitted places are the ones whose job IS to be lexical (the sandbox module that DEFINES the two
+   * predicates, and tests/comment lines which are excluded).
+   */
+  const offenders = lexicalBoundaryOffenders()
+  assert.deepEqual(
+    offenders,
+    [],
+    `这些文件在用词法判据圈定读写边界（junction 可穿透）：\n  ${offenders.join('\n  ')}\n` +
+      '用 `isWithinRootsResolved`；确实只能做预检的地方请更新这份白名单并写清理由。',
+  )
+})
+
+test('known-limit ⑤c: 扫描面能红 —— 一段合成的词法判据必须被点名', () => {
+  /**
+   * A scan over an empty set reports no problems. This drives the SAME predicate the scan uses with a
+   * source that carries the defect, so 「0 offenders」 can only mean 「I looked and found none」.
+   */
+  const synthetic = [
+    'export function looksInside(workspace: string, target: string): string {',
+    '  const root = resolve(workspace)',
+    '  const absolute = resolve(root, target)',
+    '  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) throw new Error("no")',
+    '  return absolute',
+    '}',
+    '',
+  ].join('\n')
+  assert.equal(hasLexicalBoundary(synthetic), true, '合成样本必须被判为词法边界 —— 否则扫描面是空的')
+  assert.equal(hasLexicalBoundary('const x = 1\n'), false, '普通代码不许被误报')
 })
 
 test('known-limit ⑥: 裸名 isWithinRoots 不许再导出（旧调用方不许静默拿回弱判据）', () => {

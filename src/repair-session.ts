@@ -27,6 +27,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { createMemoryMessages, runAgentTurn } from './agent-loop.js'
 import type { AgentTool, AgentTurnResult } from './agent-loop.js'
 import type { LLMAdapter, MessageAdapter } from './protocol/index.js'
+import { isWithinRootsResolved } from './adapters/raw/sandbox.js'
 
 export interface RepairSessionOptions {
   /** The only directory the session may write into. */
@@ -336,12 +337,42 @@ function execOnce(
  */
 export const REPAIR_TOOL_NAMES = Object.freeze(['read_file', 'write_file', 'append_file', 'run_command', 'restart_host'])
 
-/** Resolve a path inside a workspace, or throw. Shared with tests. */
+/**
+ * Resolve a path inside a workspace, or throw. Shared with tests.
+ *
+ * ── B4-B B4: THIS USED A LEXICAL PREDICATE, AND W1-1 HAD JUST BANNED THAT ────────────────────
+ *
+ * It was `resolve(workspace)` + `resolve(root, target)` + `startsWith(root + sep)`. Pure lexical: a
+ * **junction** (or a symlink) inside the workspace pointing OUTSIDE it passes, because the string is
+ * still prefixed by the root. Measured by `security-known-limit ①`: the lexical predicate answers
+ * 「inside」 for a junction that the realpath one answers 「outside」.
+ *
+ * W1-1 deleted the bare `isWithinRoots` and split the predicate into `…Lexical` (pre-check only) and
+ * `…Resolved` (任何真读/真写路径), and added a static check to keep it that way — **but that check only
+ * scanned `sandbox.ts`**, so this file kept the weak shape and nothing failed.
+ *
+ * So the fix is two parts, and the second is the one that matters:
+ *   1. use `isWithinRootsResolved` here;
+ *   2. widen the static check to `src/**` so the next copy is caught rather than reviewed.
+ */
 export function resolveInside(workspace: string, target: string): string {
   const root = resolve(workspace)
   const absolute = resolve(root, target)
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
-    throw new Error(`SANDBOX_DENIED: ${target} 不在 workspace 内`)
+  /**
+   * ── ONE PREDICATE, NOT TWO LAYERS OF OUR OWN ────────────────────────────────────────────────
+   *
+   * The first version of this fix kept the old `startsWith` check as a preliminary layer and added the
+   * realpath check after it. `security-known-limit ⑤b` — the widened static scan — **still flagged this
+   * file**, and it was right to: a hand-rolled `startsWith(root…)` next to the real predicate is the
+   * exact shape the scan exists to find, and 「it also calls the strong one」 is a property of today's
+   * code, not of the shape.
+   *
+   * `readWithin` / `listWithin` show the shape that does not need the second layer: call
+   * `isWithinRootsResolved` and nothing else. It already answers the `../` case, because a resolved path
+   * outside the root is outside the root whether the escape was lexical or caused by a junction.
+   */
+  if (!isWithinRootsResolved(absolute, [root])) {
+    throw new Error(`SANDBOX_DENIED: ${target} 不在 workspace 内（或它的真实路径经 junction 指向外部）`)
   }
   return absolute
 }

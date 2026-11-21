@@ -205,6 +205,33 @@ export async function createSession(ctx: any, options: CreateOptions): Promise<W
   if (!hasTape && (!Array.isArray(options.items) || options.items.length === 0)) {
     return fail('arguments', 'NO_CONTENT', '没有要注入的内容：会话不能在没有内容的情况下诞生')
   }
+  /**
+   * ── B4-B B5: MORE THAN ONE ITEM WAS SILENTLY REDUCED TO THE FIRST ────────────────────────────
+   *
+   * `const primary = options.items[0]` below is the whole story: items 2..N had **no reader**, and the
+   * call still reported success. Measured consequence — a caller that passes `[{text:'A'},{text:'B'}]`
+   * gets a session containing only `A`, with `rendered` claiming the write succeeded. The caller has no
+   * way to tell 「B was written」 from 「B silently vanished」, which is the failure class this repository
+   * keeps banning.
+   *
+   * ── WHY REFUSE RATHER THAN COMPOSE ──────────────────────────────────────────────────────────
+   *
+   * Writing several items means deciding what the TAPE looks like for N user messages — an ordering
+   * and a provenance contract change, not a loop. That belongs to the protocol (B4-A), and the dispatch
+   * lists it as a stopping condition. Refusing is the honest half: the caller learns immediately, and
+   * the capability claim stops promising something it cannot do.
+   *
+   * The refusal is ALSO what keeps `rendered` truthful — see the return path, which now cannot report
+   * success for a request this function did not fully honour.
+   */
+  if (!hasTape && Array.isArray(options.items) && options.items.length > 1) {
+    return fail(
+      'arguments',
+      'MULTI_ITEM_UNSUPPORTED',
+      `本次只支持一个 item，收到 ${options.items.length} 个：其余 ${options.items.length - 1} 个不会被写入。` +
+        '请合并成一个 item，或分多次创建；把多个 item 静默写成一个才是这里要避免的事',
+    )
+  }
 
   /**
    * capability-optional: 下一行自己用 `typeof prepare !== 'function'` 拒绝（SESSIONS_UNAVAILABLE），

@@ -134,4 +134,8 @@ jobs:
           # collision fails. Same shape as the count gate above: the stock is recorded, growth is
           # refused.
           node scripts/check-test-numbers.mjs
+          # check parity: every gate in `npm run check` must also be a CI step (B4-0b-2, 五形态之二
+          # 「门禁不咬」). Measured 2026-11-21: the drift had already happened three times across the
+          # four repositories.
+          node scripts/check-check-parity.mjs
 

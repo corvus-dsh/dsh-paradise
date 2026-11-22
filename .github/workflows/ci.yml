@@ -139,3 +139,12 @@ jobs:
           # four repositories.
           node scripts/check-check-parity.mjs
 
+          # ── TD-B1: THE SHIPPED BUNDLE MUST BE WHAT THIS SOURCE BUILDS ─────────────────────────────
+          #
+          # Measured before this step existed: this repository had ZERO artifact scripts, so
+          # 「the shipped bundle is the source」 was a claim nobody could check without a human
+          # rebuild and a visual diff. The script rebuilds, then compares every artifact git TRACKS
+          # byte for byte — the set that ships is the INDEX's set, not a glob of the build's.
+          - name: artifact freshness (committed bundle == source build)
+            run: node scripts/check-artifact-fresh.mjs
+

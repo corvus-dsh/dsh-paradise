@@ -45,7 +45,7 @@
     "preflight": "node scripts/preflight.mjs",
     "start": "node dist/harness-server.js",
     "watchdog": "node dist/watchdog.js",
-    "check": "node scripts/build.mjs && node scripts/build-harness.mjs && node scripts/preflight.mjs && node scripts/check-cycles.mjs && node scripts/run-gate.mjs scripts/type-budget.mjs && node scripts/check-readme-counts.mjs && node scripts/check-test-numbers.mjs && node scripts/check-check-parity.mjs && node --test test/*.test.mjs",
+    "check": "node scripts/build.mjs && node scripts/build-harness.mjs && node scripts/preflight.mjs && node scripts/check-cycles.mjs && node scripts/run-gate.mjs scripts/type-budget.mjs && node scripts/check-readme-counts.mjs && node scripts/check-test-numbers.mjs && node scripts/check-check-parity.mjs && node scripts/check-artifact-fresh.mjs && node --test test/*.test.mjs",
     "prepare": "node scripts/build.mjs && node scripts/build-harness.mjs"
   },
   "dsh": {

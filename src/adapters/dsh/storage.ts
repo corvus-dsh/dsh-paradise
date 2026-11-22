@@ -55,6 +55,28 @@ const KEY_PATTERN = /^[a-z0-9][a-z0-9._-]*$/iu
 /** How long an exclusive-update guard may sit before it is treated as abandoned. */
 const GUARD_STALE_MS = 5_000
 
+/**
+ * ── v8.x B13 (P0): A GUARD CARRIES WHO HOLDS IT ──────────────────────────────────────────────────
+ *
+ * A guard file used to be a bare name: existence meant 「someone holds it」, and nothing recorded
+ * WHO. That made two things indistinguishable from inside the holder:
+ *
+ *   1. the guard I created, and
+ *   2. the guard a STEALER created after the age check took mine away.
+ *
+ * So the `finally` removed the file either way. Measured consequence: A's stale guard is stolen by B,
+ * B enters the critical section, A's `finally` deletes B's guard, and a third writer immediately takes
+ * a name nobody is holding — two writers inside one critical section, which is the one thing this
+ * primitive exists to prevent. The same `finally` also fired when acquisition FAILED (`guardFd ===
+ * undefined`), so a caller that timed out deleted the live guard of the process that held it.
+ *
+ * The token is written INTO the guard file, so 「is this mine」 is answered by the file, not by a
+ * local flag that survives a steal.
+ */
+function newGuardToken(): string {
+  return `${process.pid}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 12)}`
+}
+
 /** What a `keys()` listing must never show: our own bookkeeping files. */
 const INTERNAL_SUFFIX = /\.(bak|guard)$/iu
 
@@ -269,6 +291,27 @@ export function createDshStorageAdapter(ctx: any, config: { dataDir?: string } =
       }
       const guard = `${pathOf(key)}.guard`
       const warnings: string[] = []
+      /**
+       * The token that identifies THIS acquisition. Written into the guard file on create and checked
+       * before anything destructive — deleting the guard, and the lease release below.
+       */
+      const guardToken = newGuardToken()
+      /** The file says the token we wrote — i.e. nobody has stolen and re-created the guard. */
+      const guardIsMine = (): boolean => {
+        try {
+          return readFileSync(guard, 'utf8') === guardToken
+        } catch {
+          return false
+        }
+      }
+      /** The guard file's CONTENT, for the release decision. `''` means our own token write failed. */
+      const guardContent = (): string => {
+        try {
+          return readFileSync(guard, 'utf8')
+        } catch {
+          return ''
+        }
+      }
       let guardFd: number | undefined
       try {
         mkdirSync(dirname(guard), { recursive: true })
@@ -276,6 +319,11 @@ export function createDshStorageAdapter(ctx: any, config: { dataDir?: string } =
         for (;;) {
           try {
             guardFd = openSync(guard, 'wx')
+            /**
+             * STAMP THE GUARD IMMEDIATELY. A guard whose content is empty is indistinguishable from
+             * a stolen one during the release decision below, so the window is kept to two syscalls.
+             */
+            writeFileSync(guard, guardToken, 'utf8')
             break
           } catch (error) {
             /**
@@ -342,6 +390,21 @@ export function createDshStorageAdapter(ctx: any, config: { dataDir?: string } =
         const next = verify(current)
         if (next === undefined) return { ok: false, warnings }
         /**
+         * ── v8.x B13: THE STOLEN GUARD MUST ALSO STOP THE WRITE, NOT JUST THE DELETE ──────────────
+         *
+         * `verify` runs inside the guard, and so does everything below it. If a steal happened while
+         * this section was open, our observation is no longer authoritative: the stealer may be about
+         * to commit a decision that was made against a different value. Writing anyway is how a CAS
+         * grants something it should have refused — the `verify-after-write` check below catches some
+         * of that, but a REMOVE has no after-write to verify against, so it is checked BEFORE acting.
+         */
+        if (!guardIsMine()) {
+          return {
+            ok: false,
+            warnings: [...warnings, `${key} 的更新守卫已被抢占（文件里的持有者不是本进程）：拒绝在别人的临界区里写入`],
+          }
+        }
+        /**
          * A RELEASE IS A READ-MODIFY-WRITE WHOSE RESULT IS ABSENCE. The sentinel keeps it inside this
          * one primitive instead of adding a second, subtly different, compare-and-remove — and, like
          * any other CAS decision, it was made INSIDE the guard, against the value that decision was
@@ -377,10 +440,29 @@ export function createDshStorageAdapter(ctx: any, config: { dataDir?: string } =
             // Closing an already-closed descriptor is not a failure.
           }
         }
-        try {
-          rmSync(guard, { force: true })
-        } catch {
-          // A guard that outlives its holder is stolen by the age check above.
+        /**
+         * ── v8.x B13: DELETE ONLY THE GUARD THIS CALL CREATED ──────────────────────────────────────
+         *
+         * Two ways the old unconditional `rmSync` deleted somebody else's guard:
+         *
+         *   · acquisition FAILED (`guardFd === undefined`) — a caller that timed out removed the
+         *     guard of the process that was holding it, letting a third writer in;
+         *   · the guard was STOLEN after the age check — the original holder's `finally` removed the
+         *     stealer's guard, so a fourth writer could take a name nobody held.
+         *
+         * `''` is treated as ours: the only way a guard file is empty is that our own token write
+         * failed between `openSync` and `writeFileSync`, and leaving that behind would block the key
+         * for a full staleness window over our own error.
+         */
+        if (guardFd !== undefined) {
+          const held = guardContent()
+          if (held === guardToken || held.length === 0) {
+            try {
+              rmSync(guard, { force: true })
+            } catch {
+              // A guard that outlives its holder is stolen by the age check above.
+            }
+          }
         }
       }
     },

@@ -47,7 +47,7 @@ src/read/            ← 宿主中立的读取器。接受路径或"给我路径
 interface SessionAdapter {
   readonly name: string
   readonly capabilities: SessionCapabilities
-  create(input: { cwd: string; title?: string; id?: string }): Promise<MutationReceipt & { session?: SessionRef }>
+  create(input: { cwd: string; title?: string; id?: string; items?: ContextItem[]; tape?: readonly TapeEvent[] }): Promise<MutationReceipt & { session?: SessionRef; rendered?: RenderedItem[] }>
   inject(session: SessionRef, items: ContextItem[]): Promise<MutationReceipt & { rendered: RenderedItem[] }>
   trigger(session: SessionRef, trigger: TurnTrigger): Promise<MutationReceipt>
   readLog(session: SessionRef): Promise<LogReading>
@@ -62,7 +62,26 @@ interface SessionAdapter {
 背景：一次摄入没有归属的会话，落到"选择工作区"的草稿页，用户再也找不到它。"归属靠猜"是本生态最贵的一课。
 
 **2.2 `create` 失败时不得留下半成品。**
+
 背景：一个"看起来能用"的空壳会话，比一次明确的失败更难排查。
+
+**2.2b `create` 的 `items` 是**可选**的，而"至多几项"由适配器自己声明（B4-B B5）。**
+
+`items` 属于 `create` 而不是只能靠 `inject`：在写路径是**单次事务磁带**的宿主上，内容必须在创建时
+落位 —— 没有合法的"先建空会话再追加"这一步。
+
+但"收几项"不是协议能替适配器回答的。本包里的 DSH 适配器**只接受一项**，多于一项直接
+`MULTI_ITEM_UNSUPPORTED` 拒绝，原因是**写 N 条用户消息是一个尚未定义的顺序与出处契约**。
+
+两条同时成立才算符合协议：
+
+- 接受 N 项的适配器 ⇒ 回执必须**逐项**回答会不会被显示（`rendered`，见 2.3）；
+- 至多接受一项的适配器 ⇒ 必须**拒绝**，不许静默丢掉其余项。
+
+「写成功了」用在一次没有被完整兑现的请求上，正是 `MULTI_ITEM_UNSUPPORTED` 要消灭的那句话。
+调用方收到拒绝后应当合并成一项，或分多次创建。
+
+背景：`create({items:[A,B]})` 曾经**只写 A 且返回成功** —— 调用方无法区分「B 被写了」与「B 静静消失了」。
 
 **2.3 `inject` 必须逐项回答"到底会不会被显示"。**
 `rendered: RenderedItem[]`，每项含 `requested` / `rendered` / `reason`。

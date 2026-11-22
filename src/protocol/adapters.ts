@@ -68,6 +68,29 @@ export interface SessionAdapter {
    * every functional layer. `items` is OPTIONAL: a host that can append later simply ignores it.
    *
    * The receipt MUST report, per item, whether the transcript will actually SHOW it.
+   *
+   * ── B4-B B5: `per item` IS THE CONTRACT; HOW MANY ITEMS AN ADAPTER ACCEPTS IS ITS OWN ANSWER ──
+   *
+   * The sentence above promises a `rendered` entry for EVERY item, and that is still what a conforming
+   * receipt means. It does NOT promise that every adapter accepts more than one item — an adapter may
+   * accept exactly one and REFUSE more with `MULTI_ITEM_UNSUPPORTED`, because writing N user messages is
+   * an ordering and provenance contract this protocol has not defined.
+   *
+   * Both halves are required, and each one is a lie without the other:
+   *   - 「per item reporting」 without the cap ⇒ a caller passes two and reads one `rendered` entry as
+   *     if the second had been written silently;
+   *   - 「cap」 without 「per item reporting」 ⇒ a caller cannot tell whether the ONE item it passed will
+   *     actually be shown.
+   *
+   * So: an adapter that accepts N MUST report N; an adapter that accepts at most one MUST REFUSE rather
+   * than drop the rest. 「Written successfully」 for a request that was not fully honoured is the failure
+   * `MULTI_ITEM_UNSUPPORTED` exists to make impossible. That is a REFUSAL, not a partial success, and
+   * the caller is expected to merge the items or create several sessions.
+   *
+   * NOTE TO THE NEXT EDITOR: this paragraph deliberately names no host. `purity: … names no host`
+   * caught the first version of it, which said which adapter refuses — and that was right, because the
+   * count an adapter accepts is a property of the ADAPTER, not of the protocol that permits both
+   * answers.
    */
   create(input: {
     cwd: string

@@ -92,21 +92,86 @@ const DEFAULT_PROMPT_MARKER = '[plugin 点火]'
 const TRIGGER_TIMEOUT_MS = 20_000
 
 /**
+ * The characters the COMPOSITION can put directly after a marker.
+ *
+ * Derived from `trigger.ts` (`prompt = marker` when the caller supplies no text, else
+ * `` `${marker} ${custom}` ``), not invented: a marker is a TOKEN, and a token is followed by the end
+ * of the string or by a separator.
+ */
+const PROMPT_BOUNDARY                      = new Set([' ', '\t', '\n', '\r'])
+
+function markerList(marker                            )                    {
+  return typeof marker === 'string' ? [marker] : marker
+}
+
+/**
+ * Split `text` into (matched marker, body) — `undefined` when no marker matches as a TOKEN.
+ *
+ * v8.x B14 (P1): the old `trimmed.startsWith(candidate)` had no boundary at all, so
+ * `[plugin 点火]这不是点火载荷` counted as one of ours merely because the marker's characters came
+ * first. A marker is a token: what follows it has to be a separator or the end of the string.
+ */
+function splitMarker(
+  text        ,
+  markers                   ,
+)                                               {
+  const trimmed = text.trimStart()
+  for (const candidate of markers) {
+    if (typeof candidate !== 'string' || candidate.length === 0) continue
+    if (trimmed === candidate) return { marker: candidate, body: '' }
+    if (!trimmed.startsWith(candidate)) continue
+    const next = trimmed.charAt(candidate.length)
+    if (!PROMPT_BOUNDARY.has(next)) continue
+    return { marker: candidate, body: trimmed.slice(candidate.length).trim() }
+  }
+  return undefined
+}
+
+/**
  * Is this text one of OUR ignitions, rather than something a human typed?
  *
  * `marker` accepts a LIST because a caller's stamp changes over time and old sessions must keep
  * being recognised. The first entry is the current marker (also used when composing new prompts);
  * the rest are historical aliases that only ever matter on the READ side.
+ *
+ * This answers the COMPOSING question — 「does this text already carry one of my markers」 — and the
+ * matching stops at the marker token. The READING question (「was this log line my ignition」) is
+ * `isOurIgnitionPrompt`, because a matching marker is not enough to make a message ours.
  */
 function isPromptText(text         , marker                             = DEFAULT_PROMPT_MARKER)          {
   if (typeof text !== 'string') return false
-  const trimmed = text.trimStart()
-  const markers = typeof marker === 'string' ? [marker] : marker
-  for (const candidate of markers) {
-    if (typeof candidate !== 'string' || candidate.length === 0) continue
-    if (trimmed.startsWith(candidate)) return true
-  }
-  return false
+  return splitMarker(text, markerList(marker)) !== undefined
+}
+
+/**
+ * ── v8.x B14 (P1): A MARKER IS GUESSABLE, SO IT CANNOT BE THE WHOLE TEST ─────────────────────────
+ *
+ * `alreadyTriggered` decided 「already ignited」 from `isPromptText` alone, i.e. from a caller-known
+ * string at the front of a user message. Anything able to write a message starting with that string —
+ * the model itself, a transcript pasted into the session, a user quoting the marker — retired the
+ * idempotence check, and the wake-up prompt was never sent. The session then sits there: 「ignition
+ * done」 on the receipt, no work running.
+ *
+ * What IS checkable is the whole composed prompt: the alias list exists for marker RENAMES, and a
+ * rename does not change the body. So the comparison is `marker + body` on both sides — the alias is
+ * free, the body must match exactly. A body that differs is not our prompt, whatever precedes it.
+ *
+ * STATED TRADE: a caller that changes its ignition BODY will not recognise its own older prompts, and
+ * the session is triggered again. That is the right way round — a redundant wake-up is recoverable,
+ * a missed wake-up is a silent dead session. The alias list covers the rename case, which is the one
+ * that actually happened.
+ */
+function isOurIgnitionPrompt(
+  text         ,
+  composedPrompt        ,
+  marker                             = DEFAULT_PROMPT_MARKER,
+)          {
+  if (typeof text !== 'string' || composedPrompt.length === 0) return false
+  const markers = markerList(marker)
+  const theirs = splitMarker(text, markers)
+  const ours = splitMarker(composedPrompt, markers)
+  if (theirs === undefined || ours === undefined) return false
+  return theirs.body === ours.body
 }
 
 /**
@@ -4073,6 +4138,14 @@ async function alreadyTriggered(
   readSession                                            ,
   sessionId        ,
   marker                             = DEFAULT_PROMPT_MARKER,
+  /**
+   * v8.x B14 (P1): the prompt this call is ABOUT TO SEND.
+   *
+   * When present, the match is the whole composed prompt (marker alias free, body exact) instead of a
+   * prefix — see `isOurIgnitionPrompt`. A caller-known marker at the front of a message is not evidence
+   * that the message was ours: the model can write it, a pasted transcript can contain it.
+   */
+  composedPrompt         ,
 )                                                                   {
   if (typeof readSession !== 'function') return { known: false, triggered: false, reason: '无法读取目标日志' }
   let snapshot     
@@ -4089,7 +4162,11 @@ async function alreadyTriggered(
     if (event?.type !== 'user/message') continue
     const payload = event.data?.message ?? event.data
     const text = payload?.content?.[0]?.text
-    if (isPromptText(text, marker)) return { known: true, triggered: true }
+    const ours =
+      composedPrompt === undefined
+        ? isPromptText(text, marker)
+        : isOurIgnitionPrompt(text, composedPrompt, marker)
+    if (ours) return { known: true, triggered: true }
   }
   return { known: true, triggered: false }
 }
@@ -4097,9 +4174,25 @@ async function alreadyTriggered(
 /**
  * Admit ONE trigger prompt, through the first channel that works.
  *
- * Never throws: every failure is a receipt. A caller that believes ignition happened and does not see
- * work starting has no way to tell a slow start from a broken channel, so the outcome is always stated.
+ * ── v8.x B14 (P1): ONE TRIGGER PER SESSION PER PROCESS, OR NONE OF THEM KNOWS ─────────────────────
+ *
+ * The idempotence check is a READ, and the prompt is a WRITE, and there was nothing between them. Two
+ * callers that entered together both read 「not triggered」 and both sent the wake-up — the duplicate
+ * the check exists to prevent. Measured shape: the graft retry path and the observer's ignition can
+ * reach the same session in the same tick, and neither returns until the host answers.
+ *
+ * An in-process admission set closes exactly that window. It is NOT a cross-process lock, and the
+ * limit is stated rather than implied: two PROCESSES racing on one session still need a durable guard
+ * (this layer has one — `storage.compareAndSet` — but wiring the admission through it would put a
+ * filesystem round-trip and a staleness window in front of every ignition, which is a design decision
+ * that deserves its own item, not a side effect of this fix).
+ *
+ * The refusal is `ok:false` with `TRIGGER_IN_FLIGHT`, NOT `alreadyTriggered`: we do not know how the
+ * other call will end, and reporting 「already done」 would be a claim about an outcome that has not
+ * happened yet.
  */
+const inFlightTriggers = new Set        ()
+
 async function triggerSession(
   ctx     ,
   sessionId        ,
@@ -4109,6 +4202,43 @@ async function triggerSession(
     queue: 'queue',
     interrupt: 'interrupt',
   },
+)                          {
+  /**
+   * `skipIdempotence` is the caller saying 「send it regardless」 (a deliberate re-ignition). Admission
+   * still applies: the whole point is that two SIMULTANEOUS prompts cannot both be in flight.
+   */
+  if (inFlightTriggers.has(sessionId)) {
+    return {
+      ok: false,
+      stage: 'trigger:inflight',
+      promptChars: 0,
+      warnings: [],
+      error: {
+        code: 'TRIGGER_IN_FLIGHT',
+        stage: 'trigger',
+        message: `会话 ${sessionId} 已有一个点火请求在本进程内进行中：拒绝并发点火（该请求的结果尚未知）`,
+      },
+    }
+  }
+  inFlightTriggers.add(sessionId)
+  try {
+    return await runTriggerSession(ctx, sessionId, options, dialect)
+  } finally {
+    inFlightTriggers.delete(sessionId)
+  }
+}
+
+/**
+ * The admitted body of `triggerSession`.
+ *
+ * Never throws: every failure is a receipt. A caller that believes ignition happened and does not see
+ * work starting has no way to tell a slow start from a broken channel, so the outcome is always stated.
+ */
+async function runTriggerSession(
+  ctx     ,
+  sessionId        ,
+  options                ,
+  dialect                                      ,
 )                          {
   const warnings           = []
   /**
@@ -4158,7 +4288,7 @@ async function triggerSession(
      * its marker would fail to recognise its own pre-rename prompts and trigger an already-awake
      * session again.
      */
-    const prior = await alreadyTriggered(readSession, sessionId, markerForRead)
+    const prior = await alreadyTriggered(readSession, sessionId, markerForRead, prompt)
     if (prior.triggered) {
       return {
         ok: true,

@@ -25,7 +25,7 @@
  * arrives at the start of the next turn is still worth more than one that never arrives.
  */
 
-import { DEFAULT_PROMPT_MARKER, TRIGGER_TIMEOUT_MS, isPromptText, markerToStamp } from './policy.js'
+import { DEFAULT_PROMPT_MARKER, TRIGGER_TIMEOUT_MS, isPromptText, isOurIgnitionPrompt, markerToStamp } from './policy.js'
 import { service } from './services.js'
 
 /** What one trigger attempt did, with evidence. */
@@ -121,6 +121,14 @@ export async function alreadyTriggered(
   readSession: ((id: string) => Promise<any>) | undefined,
   sessionId: string,
   marker: string | readonly string[] = DEFAULT_PROMPT_MARKER,
+  /**
+   * v8.x B14 (P1): the prompt this call is ABOUT TO SEND.
+   *
+   * When present, the match is the whole composed prompt (marker alias free, body exact) instead of a
+   * prefix — see `isOurIgnitionPrompt`. A caller-known marker at the front of a message is not evidence
+   * that the message was ours: the model can write it, a pasted transcript can contain it.
+   */
+  composedPrompt?: string,
 ): Promise<{ known: boolean; triggered: boolean; reason?: string }> {
   if (typeof readSession !== 'function') return { known: false, triggered: false, reason: '无法读取目标日志' }
   let snapshot: any
@@ -137,7 +145,11 @@ export async function alreadyTriggered(
     if (event?.type !== 'user/message') continue
     const payload = event.data?.message ?? event.data
     const text = payload?.content?.[0]?.text
-    if (isPromptText(text, marker)) return { known: true, triggered: true }
+    const ours =
+      composedPrompt === undefined
+        ? isPromptText(text, marker)
+        : isOurIgnitionPrompt(text, composedPrompt, marker)
+    if (ours) return { known: true, triggered: true }
   }
   return { known: true, triggered: false }
 }
@@ -145,9 +157,25 @@ export async function alreadyTriggered(
 /**
  * Admit ONE trigger prompt, through the first channel that works.
  *
- * Never throws: every failure is a receipt. A caller that believes ignition happened and does not see
- * work starting has no way to tell a slow start from a broken channel, so the outcome is always stated.
+ * ── v8.x B14 (P1): ONE TRIGGER PER SESSION PER PROCESS, OR NONE OF THEM KNOWS ─────────────────────
+ *
+ * The idempotence check is a READ, and the prompt is a WRITE, and there was nothing between them. Two
+ * callers that entered together both read 「not triggered」 and both sent the wake-up — the duplicate
+ * the check exists to prevent. Measured shape: the graft retry path and the observer's ignition can
+ * reach the same session in the same tick, and neither returns until the host answers.
+ *
+ * An in-process admission set closes exactly that window. It is NOT a cross-process lock, and the
+ * limit is stated rather than implied: two PROCESSES racing on one session still need a durable guard
+ * (this layer has one — `storage.compareAndSet` — but wiring the admission through it would put a
+ * filesystem round-trip and a staleness window in front of every ignition, which is a design decision
+ * that deserves its own item, not a side effect of this fix).
+ *
+ * The refusal is `ok:false` with `TRIGGER_IN_FLIGHT`, NOT `alreadyTriggered`: we do not know how the
+ * other call will end, and reporting 「already done」 would be a claim about an outcome that has not
+ * happened yet.
  */
+const inFlightTriggers = new Set<string>()
+
 export async function triggerSession(
   ctx: any,
   sessionId: string,
@@ -157,6 +185,43 @@ export async function triggerSession(
     queue: 'queue',
     interrupt: 'interrupt',
   },
+): Promise<TriggerReceipt> {
+  /**
+   * `skipIdempotence` is the caller saying 「send it regardless」 (a deliberate re-ignition). Admission
+   * still applies: the whole point is that two SIMULTANEOUS prompts cannot both be in flight.
+   */
+  if (inFlightTriggers.has(sessionId)) {
+    return {
+      ok: false,
+      stage: 'trigger:inflight',
+      promptChars: 0,
+      warnings: [],
+      error: {
+        code: 'TRIGGER_IN_FLIGHT',
+        stage: 'trigger',
+        message: `会话 ${sessionId} 已有一个点火请求在本进程内进行中：拒绝并发点火（该请求的结果尚未知）`,
+      },
+    }
+  }
+  inFlightTriggers.add(sessionId)
+  try {
+    return await runTriggerSession(ctx, sessionId, options, dialect)
+  } finally {
+    inFlightTriggers.delete(sessionId)
+  }
+}
+
+/**
+ * The admitted body of `triggerSession`.
+ *
+ * Never throws: every failure is a receipt. A caller that believes ignition happened and does not see
+ * work starting has no way to tell a slow start from a broken channel, so the outcome is always stated.
+ */
+async function runTriggerSession(
+  ctx: any,
+  sessionId: string,
+  options: TriggerOptions,
+  dialect: { queue: string; interrupt: string },
 ): Promise<TriggerReceipt> {
   const warnings: string[] = []
   /**
@@ -206,7 +271,7 @@ export async function triggerSession(
      * its marker would fail to recognise its own pre-rename prompts and trigger an already-awake
      * session again.
      */
-    const prior = await alreadyTriggered(readSession, sessionId, markerForRead)
+    const prior = await alreadyTriggered(readSession, sessionId, markerForRead, prompt)
     if (prior.triggered) {
       return {
         ok: true,

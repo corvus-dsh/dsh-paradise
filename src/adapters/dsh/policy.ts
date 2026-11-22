@@ -82,21 +82,86 @@ export const DEFAULT_PROMPT_MARKER = '[plugin 点火]'
 export const TRIGGER_TIMEOUT_MS = 20_000
 
 /**
+ * The characters the COMPOSITION can put directly after a marker.
+ *
+ * Derived from `trigger.ts` (`prompt = marker` when the caller supplies no text, else
+ * `` `${marker} ${custom}` ``), not invented: a marker is a TOKEN, and a token is followed by the end
+ * of the string or by a separator.
+ */
+const PROMPT_BOUNDARY: ReadonlySet<string> = new Set([' ', '\t', '\n', '\r'])
+
+function markerList(marker: string | readonly string[]): readonly string[] {
+  return typeof marker === 'string' ? [marker] : marker
+}
+
+/**
+ * Split `text` into (matched marker, body) — `undefined` when no marker matches as a TOKEN.
+ *
+ * v8.x B14 (P1): the old `trimmed.startsWith(candidate)` had no boundary at all, so
+ * `[plugin 点火]这不是点火载荷` counted as one of ours merely because the marker's characters came
+ * first. A marker is a token: what follows it has to be a separator or the end of the string.
+ */
+function splitMarker(
+  text: string,
+  markers: readonly string[],
+): { marker: string; body: string } | undefined {
+  const trimmed = text.trimStart()
+  for (const candidate of markers) {
+    if (typeof candidate !== 'string' || candidate.length === 0) continue
+    if (trimmed === candidate) return { marker: candidate, body: '' }
+    if (!trimmed.startsWith(candidate)) continue
+    const next = trimmed.charAt(candidate.length)
+    if (!PROMPT_BOUNDARY.has(next)) continue
+    return { marker: candidate, body: trimmed.slice(candidate.length).trim() }
+  }
+  return undefined
+}
+
+/**
  * Is this text one of OUR ignitions, rather than something a human typed?
  *
  * `marker` accepts a LIST because a caller's stamp changes over time and old sessions must keep
  * being recognised. The first entry is the current marker (also used when composing new prompts);
  * the rest are historical aliases that only ever matter on the READ side.
+ *
+ * This answers the COMPOSING question — 「does this text already carry one of my markers」 — and the
+ * matching stops at the marker token. The READING question (「was this log line my ignition」) is
+ * `isOurIgnitionPrompt`, because a matching marker is not enough to make a message ours.
  */
 export function isPromptText(text: unknown, marker: string | readonly string[] = DEFAULT_PROMPT_MARKER): boolean {
   if (typeof text !== 'string') return false
-  const trimmed = text.trimStart()
-  const markers = typeof marker === 'string' ? [marker] : marker
-  for (const candidate of markers) {
-    if (typeof candidate !== 'string' || candidate.length === 0) continue
-    if (trimmed.startsWith(candidate)) return true
-  }
-  return false
+  return splitMarker(text, markerList(marker)) !== undefined
+}
+
+/**
+ * ── v8.x B14 (P1): A MARKER IS GUESSABLE, SO IT CANNOT BE THE WHOLE TEST ─────────────────────────
+ *
+ * `alreadyTriggered` decided 「already ignited」 from `isPromptText` alone, i.e. from a caller-known
+ * string at the front of a user message. Anything able to write a message starting with that string —
+ * the model itself, a transcript pasted into the session, a user quoting the marker — retired the
+ * idempotence check, and the wake-up prompt was never sent. The session then sits there: 「ignition
+ * done」 on the receipt, no work running.
+ *
+ * What IS checkable is the whole composed prompt: the alias list exists for marker RENAMES, and a
+ * rename does not change the body. So the comparison is `marker + body` on both sides — the alias is
+ * free, the body must match exactly. A body that differs is not our prompt, whatever precedes it.
+ *
+ * STATED TRADE: a caller that changes its ignition BODY will not recognise its own older prompts, and
+ * the session is triggered again. That is the right way round — a redundant wake-up is recoverable,
+ * a missed wake-up is a silent dead session. The alias list covers the rename case, which is the one
+ * that actually happened.
+ */
+export function isOurIgnitionPrompt(
+  text: unknown,
+  composedPrompt: string,
+  marker: string | readonly string[] = DEFAULT_PROMPT_MARKER,
+): boolean {
+  if (typeof text !== 'string' || composedPrompt.length === 0) return false
+  const markers = markerList(marker)
+  const theirs = splitMarker(text, markers)
+  const ours = splitMarker(composedPrompt, markers)
+  if (theirs === undefined || ours === undefined) return false
+  return theirs.body === ours.body
 }
 
 /**

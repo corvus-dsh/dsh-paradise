@@ -11219,14 +11219,29 @@ async function runRepairSession(options                      )                  
 
   emit({ type: 'session-start', workspace, logPath: options.logPath, dryRun })
 
-  /** Resolve a model-supplied path inside the workspace, or refuse. */
-  const inside = (target        )         => {
-    const absolute = resolve(workspace, target)
-    if (absolute !== workspace && !absolute.startsWith(`${workspace}${sep}`)) {
-      throw new Error(`SANDBOX_DENIED: ${target} 不在 workspace 内（允许 ${workspace}）`)
-    }
-    return absolute
-  }
+  /**
+   * ── B4-B B4b: THE FIXED PREDICATE WAS NOT ON THE LIVE PATH ──────────────────────────────────
+   *
+   * The closure below USED to be the second, lexical predicate:
+   *
+   *     const inside = (target) => {
+   *       const absolute = resolve(workspace, target)
+   *       if (absolute !== workspace && !absolute.startsWith(`${workspace}${sep}`)) throw …
+   *       return absolute
+   *     }
+   *
+   * B4 fixed `resolveInside` (:358) to `isWithinRootsResolved`, and left THIS one alone. So every tool
+   * the repair session actually gives a model — `read_file`, `write_file`, `append_file`, and the crash
+   * log read — went through the lexical check, while the realpath check sat in an exported function
+   * whose only callers were two tests. Measured (probe, junction inside the workspace pointing outside):
+   *
+   *     write_file 'escape/pwned.txt'  ⇒  ok=true, and the file APPEARED OUTSIDE the workspace
+   *     resolveInside(workspace, 'escape/pwned.txt')  ⇒  SANDBOX_DENIED（正确）
+   *
+   * Two predicates for one question is the defect; 「the other one is also correct」 is a property of
+   * today's code, not of the shape. So there is now exactly ONE, and this file owns no path logic.
+   */
+  const inside = (target        )         => resolveInside(workspace, target)
 
   /**
    * Paths are reported with `/`, not the platform separator.

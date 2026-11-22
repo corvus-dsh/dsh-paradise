@@ -40,25 +40,69 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SANDBOX_SOURCE = readFileSync(join(HERE, '..', 'src', 'adapters', 'raw', 'sandbox.ts'), 'utf8')
 
 /**
- * ── THE SCAN, AND WHY IT IS A SEPARATE PREDICATE ────────────────────────────────────────────
+ * ── THE SHAPE OF A CONTAINMENT CHECK, NAMED BY STRUCTURE ────────────────────────────────────
  *
- * `hasLexicalBoundary` answers one question about SOURCE TEXT: does this file build a containment
- * check out of `resolve()` plus a `startsWith(root…)` comparison — i.e. a boundary that a junction can
- * walk through?
+ * A containment test CONCATENATES a prefix with a separator: `X + sep`, `${X}${sep}`, `X + '/'`.
+ * That is the property being looked for — not the identifier, and not the substring `startsWith`.
  *
- * It is excluded from comment lines for the reason this batch learned three times: a check that a
- * comment can satisfy is not a check, and equally one that a comment can TRIP is a check people delete.
- * The two predicates in `sandbox.ts` are named in the whitelist, because their job is to be that
- * comparison.
+ * WHY NOT A REGEX OVER `root`: the old scan did exactly that, so `repair-session.ts` (which used
+ * `workspace`) was invisible while the defect was live. A check keyed on a variable name is defeated by
+ * a rename, and renaming is not even a hostile act.
+ *
+ * WHY NOT A REGEX OVER `startsWith` ALONE: measured against `src/`, that flags
+ * `value.startsWith('/')` in `adapters/memory/index.ts` — an IS-ABSOLUTE-PATH test, which establishes
+ * no containment at all. A gate that cries wolf gets switched off, so the separator must be
+ * CONCATENATED with something, not used as the whole argument.
+ *
+ * A THIRD LIMIT, STATED RATHER THAN HIDDEN: this catches the `startsWith` spelling. A containment check
+ * written as `relative(root, p)` + `!rel.startsWith('..')` would still slip through. The scan makes the
+ * KNOWN shape hard to reintroduce; it is not a proof, and the file says so.
  */
-const LEXICAL_SHAPE = /startsWith\([^)]*root[^)]*\)|startsWith\(`\$\{[^}]*root[^}]*\}/u
+const SEPARATOR_TOKENS = ['sep', "'/'", '"\/"', "'\\\\'", '"\\\\"']
+
+/** Every argument text passed to `startsWith(` in the (comment-stripped) source. */
+export function startsWithArguments(code) {
+  const found = []
+  const marker = 'startsWith('
+  let from = 0
+  for (;;) {
+    const at = code.indexOf(marker, from)
+    if (at < 0) return found
+    let depth = 0
+    let argument = ''
+    let i = at + marker.length - 1
+    for (; i < code.length; i += 1) {
+      const ch = code[i]
+      if (ch === '(') depth += 1
+      else if (ch === ')') {
+        depth -= 1
+        if (depth === 0) break
+      }
+      argument += ch
+    }
+    found.push(argument)
+    from = i + 1
+  }
+}
+
+/**
+ * True when an argument CONCATENATES a prefix with a separator — the containment shape.
+ *
+ * `/${'base'}${sep}/` and `root + path.sep` both qualify; `'/')` and `prefix)` do not.
+ */
+export function isContainmentArgument(argument) {
+  const concatenates = argument.includes('${') || argument.includes('+')
+  if (!concatenates) return false
+  return SEPARATOR_TOKENS.some((token) => argument.includes(token))
+}
 
 export function hasLexicalBoundary(source) {
   const code = String(source)
     .split(/\r?\n/u)
     .filter((line) => !/^\s*(?:\/\/|\/\*|\*)/u.test(line))
     .join('\n')
-  return LEXICAL_SHAPE.test(code) && /\bresolve\s*\(/u.test(code)
+  if (!/\bresolve\s*\(/u.test(code)) return false
+  return startsWithArguments(code).some(isContainmentArgument)
 }
 
 /**
@@ -249,6 +293,61 @@ test('known-limit ⑤c: 扫描面能红 —— 一段合成的词法判据必须
   ].join('\n')
   assert.equal(hasLexicalBoundary(synthetic), true, '合成样本必须被判为词法边界 —— 否则扫描面是空的')
   assert.equal(hasLexicalBoundary('const x = 1\n'), false, '普通代码不许被误报')
+})
+
+test('known-limit ⑤d: 扫描器的判据是「形状」，不是变量名 —— 换名不许绕过（B4-B B4b）', () => {
+  /**
+   * THE DEFECT THIS PINS, VERBATIM. This is `repair-session.ts`'s live closure before B4b, character
+   * for character: it compares `workspace`, not `root`. The old scan was keyed on the identifier `root`,
+   * so this exact function was reported CLEAN — while `write_file` wrote outside the workspace through a
+   * junction (measured). A criterion that a rename defeats is not a criterion.
+   */
+  const liveClosureWithWorkspace = [
+    'export function runRepairSession(options) {',
+    '  const workspace = resolve(options.workspace)',
+    '  const inside = (target) => {',
+    '    const absolute = resolve(workspace, target)',
+    '    if (absolute !== workspace && !absolute.startsWith(`${workspace}${sep}`)) {',
+    '      throw new Error("SANDBOX_DENIED")',
+    '    }',
+    '    return absolute',
+    '  }',
+    '}',
+    '',
+  ].join('\n')
+  assert.equal(
+    hasLexicalBoundary(liveClosureWithWorkspace),
+    true,
+    '用 workspace 而不是 root 的同一个缺陷，必须被判出来 —— 否则扫描器只是记住了一个词',
+  )
+
+  /** Same shape, a third name, `+` instead of a template: the NOUN must not matter. */
+  const withAnotherName = [
+    'function guard(base, p) {',
+    '  const full = resolve(base, p)',
+    '  return full.startsWith(base + path.sep)',
+    '}',
+    '',
+  ].join('\n')
+  assert.equal(hasLexicalBoundary(withAnotherName), true, '换名 + 换拼接写法也必须命中')
+
+  /**
+   * NEGATIVE HALF — otherwise the only thing 「matches everything」 proves is that it matches.
+   *
+   * `'/'` as the WHOLE argument is an IS-ABSOLUTE-PATH test, not a containment test. Measured: a
+   * `startsWith`-only predicate flags `adapters/memory/index.ts:63` for this, and a gate that cries wolf
+   * gets switched off.
+   */
+  const absolutePathTest = [
+    'function isAbsolute(value) {',
+    '  return value.startsWith("/") || value.startsWith("\\\\\\\\")',
+    '}',
+    '',
+  ].join('\n')
+  assert.equal(hasLexicalBoundary(absolutePathTest), false, '「是否绝对路径」不是包含性判据，不许误报')
+
+  const ordinaryPrefix = 'function bad(s) {\n  return s.startsWith("memory-phase-")\n}\n'
+  assert.equal(hasLexicalBoundary(ordinaryPrefix), false, '普通前缀判断不许误报')
 })
 
 test('known-limit ⑥: 裸名 isWithinRoots 不许再导出（旧调用方不许静默拿回弱判据）', () => {

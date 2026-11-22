@@ -61,6 +61,15 @@ export interface CreateOptions {
   id?: string
   /** A session whose runtime knobs (provider/model/preset/policy) are inherited. */
   inheritFrom?: string
+  /**
+   * TD-26: the preset the CALLER already resolved.
+   *
+   * Wins over this writer's own read when present, and a disagreement is REPORTED rather than silently
+   * resolved: the caller derived it from evidence this adapter may not have (graft reads the source's
+   * last `agent-preset/selected` event), while this writer reads the same source independently. If the
+   * two ever differ, one of the two reads is wrong and the receipt should say so.
+   */
+  inheritPreset?: string
   /** The system head the session opens with. */
   systemPrompt: string
   /** The content to place inside the new session. */
@@ -256,6 +265,31 @@ export async function createSession(ctx: any, options: CreateOptions): Promise<W
       ? await readSourceRuntime(ctx, options.inheritFrom.trim())
       : { runtimeIntent: {}, warnings: [] as string[] }
   warnings.push(...source.warnings)
+  /**
+   * ── TD-26: THE CALLER'S PRESET WINS, AND A DISAGREEMENT IS SAID OUT LOUD ────────────────────────
+   *
+   * `graft` resolves the source's preset from the source's OWN event stream and passes it here. This
+   * writer also reads the source, so there are two independent answers to one question. Preferring the
+   * caller is right — it has evidence this adapter may not — but doing it SILENTLY would be the same
+   * failure this batch keeps finding: two values for one fact, and nobody saying which one won.
+   *
+   * An empty / whitespace-only value is ignored rather than written: a header carrying `agentPreset: ''`
+   * is worse than one carrying nothing, because a downstream reader cannot tell 「no preset」 from
+   * 「a preset that could not be named」.
+   */
+  const callerPreset =
+    typeof options.inheritPreset === 'string' && options.inheritPreset.trim().length > 0
+      ? options.inheritPreset.trim()
+      : undefined
+  if (callerPreset !== undefined) {
+    if (source.agentPreset !== undefined && source.agentPreset !== callerPreset) {
+      warnings.push(
+        `inheritPreset 不一致：调用方说 ${callerPreset}，本适配器从同一来源读到 ${source.agentPreset}；` +
+          '以调用方为准（它可能看到了本适配器看不到的证据），但两处读数不同这件事本身需要人看一眼',
+      )
+    }
+    source.agentPreset = callerPreset
+  }
 
   const sessionId =
     typeof options.id === 'string' && options.id.trim().length > 0 ? options.id.trim() : `session-${randomUUID()}`

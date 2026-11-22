@@ -159,6 +159,14 @@ export function createDshSessionAdapter(ctx: any): SessionAdapter {
          * The caller names the source; the adapter decides how to copy.
          */
         ...(input.inheritFrom === undefined ? {} : { inheritFrom: input.inheritFrom }),
+        /**
+         * TD-26: the caller's already-resolved preset, forwarded verbatim.
+         *
+         * The adapter does NOT prefer it over its own read silently — `session-writer` uses it and
+         * reports when it disagrees with what it read itself, because 「two votes for one fact」 is
+         * only safe while somebody says which one won.
+         */
+        ...(input.inheritPreset === undefined ? {} : { inheritPreset: input.inheritPreset }),
         systemPrompt: SYSTEM_HEAD_PROMPT,
         items,
         ...(hasTape ? { tape: input.tape } : {}),

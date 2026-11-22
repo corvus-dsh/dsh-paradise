@@ -122,6 +122,19 @@ export interface SessionAdapter {
      */
     inheritFrom?: string
     /**
+     * ── TD-26: THE PRESET THE CALLER ALREADY RESOLVED ────────────────────────────────────────────
+     *
+     * Optional and usually absent. When present it takes precedence over whatever this adapter would
+     * read from `inheritFrom`, because the caller may have derived it from evidence the adapter cannot
+     * see (graft reads the source's last `agent-preset/selected` event and falls back to the header).
+     *
+     * WHY IT EXISTS AT ALL: without it, a resolved preset has no way to reach the target header, so
+     * 「which preset was decided on」 and 「which preset the adapter independently picked」 can disagree
+     * with nothing to compare them against. Passing the value makes that comparison possible — it does
+     * not make the adapter trust it blindly (see the implementation: an empty string is ignored).
+     */
+    inheritPreset?: string
+    /**
      * Let the adapter attach the new container to its workspace group and announce it to clients.
      *
      * OPTIONAL, and defaults to ON. A caller that owns its own publishing — a specific group id in its

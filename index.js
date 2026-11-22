@@ -1591,6 +1591,19 @@ function planRelease(current                         , held             )       
        
                         
        
+                                                                                                    
+      
+                                                                                                     
+                                                                                                       
+                                                                                                      
+      
+                                                                                                    
+                                                                                                     
+                                                                                                       
+                                                                                                  
+       
+                          
+       
                                                                                                   
       
                                                                                                        
@@ -3515,6 +3528,15 @@ async function verifyDeletion(ctx     , sessionId        )                      
              
                                                                                     
                       
+     
+                                                   
+    
+                                                                                                       
+                                                                                                      
+                                                                                                       
+                                                                                  
+     
+                        
                                                 
                       
                                                      
@@ -3710,6 +3732,31 @@ async function createSession(ctx     , options               )                  
       ? await readSourceRuntime(ctx, options.inheritFrom.trim())
       : { runtimeIntent: {}, warnings: []             }
   warnings.push(...source.warnings)
+  /**
+   * ── TD-26: THE CALLER'S PRESET WINS, AND A DISAGREEMENT IS SAID OUT LOUD ────────────────────────
+   *
+   * `graft` resolves the source's preset from the source's OWN event stream and passes it here. This
+   * writer also reads the source, so there are two independent answers to one question. Preferring the
+   * caller is right — it has evidence this adapter may not — but doing it SILENTLY would be the same
+   * failure this batch keeps finding: two values for one fact, and nobody saying which one won.
+   *
+   * An empty / whitespace-only value is ignored rather than written: a header carrying `agentPreset: ''`
+   * is worse than one carrying nothing, because a downstream reader cannot tell 「no preset」 from
+   * 「a preset that could not be named」.
+   */
+  const callerPreset =
+    typeof options.inheritPreset === 'string' && options.inheritPreset.trim().length > 0
+      ? options.inheritPreset.trim()
+      : undefined
+  if (callerPreset !== undefined) {
+    if (source.agentPreset !== undefined && source.agentPreset !== callerPreset) {
+      warnings.push(
+        `inheritPreset 不一致：调用方说 ${callerPreset}，本适配器从同一来源读到 ${source.agentPreset}；` +
+          '以调用方为准（它可能看到了本适配器看不到的证据），但两处读数不同这件事本身需要人看一眼',
+      )
+    }
+    source.agentPreset = callerPreset
+  }
 
   const sessionId =
     typeof options.id === 'string' && options.id.trim().length > 0 ? options.id.trim() : `session-${randomUUID()}`
@@ -4540,6 +4587,14 @@ function createDshSessionAdapter(ctx     )                 {
          * The caller names the source; the adapter decides how to copy.
          */
         ...(input.inheritFrom === undefined ? {} : { inheritFrom: input.inheritFrom }),
+        /**
+         * TD-26: the caller's already-resolved preset, forwarded verbatim.
+         *
+         * The adapter does NOT prefer it over its own read silently — `session-writer` uses it and
+         * reports when it disagrees with what it read itself, because 「two votes for one fact」 is
+         * only safe while somebody says which one won.
+         */
+        ...(input.inheritPreset === undefined ? {} : { inheritPreset: input.inheritPreset }),
         systemPrompt: SYSTEM_HEAD_PROMPT,
         items,
         ...(hasTape ? { tape: input.tape } : {}),

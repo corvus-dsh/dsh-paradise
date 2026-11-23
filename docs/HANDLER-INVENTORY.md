@@ -1,0 +1,21 @@
+# handler-inventory · dsh-paradise
+
+> 生成物：`node scripts/handler-inventory.mjs --write`。**不要手改** —— 它每次从头扫源码。
+> `facts` / `movable` / `why` 来自 `docs/handler-inventory.json`（判断，不可机械提取）。
+
+## tool · 0
+
+**这一类是 0，理由是事实：** paradise **注册 0 个工具**：`src/index.ts:134` 自述 "registers no tools"，实测一致。它的能力面在 raw tool factory（`adapters/raw/tools.ts`）与 `define()` 工厂里，那是**给宿主用的构造器**，不是 ctx.tools.register。这一格是 0 是事实，不是漏扫。
+
+## command · 0
+
+**这一类是 0，理由是事实：** paradise 不注册命令：它没有面向人的面板或斜杠命令，诊断走 graft 的 console / debug_status。这一格是 0 是事实。
+
+## event · 0
+
+**这一类是 0，理由是事实：** paradise 不订阅宿主事件：它被**其它插件**驱动（graft 经 setParadiseWriteProvider，observer 经 paradise-bridge），而不是自己监听 agent/* 事件。这一格是 0 是事实 —— 与 memory/observer 的 0 不是同一原因（它们有，只是用 ctx.on?.() 可选调用）。
+
+## adapter-entry · 0
+
+**这一类是 0，理由是事实：** paradise 的 adapter 注册**不经过 ctx**：`adapters/dsh/index.ts`、`adapters/memory/index.ts`、`adapters/raw/index.ts` 是**工厂函数**，由调用方（dispatcher / launcher / workflow）自行实例化。所以扫描面里 0 是事实；paradise 的真实注册面是 dispatcher（`dispatch()` 的 ticket / runner / event）与 launcher，已在本仓的 test 里逐个钉住。
+

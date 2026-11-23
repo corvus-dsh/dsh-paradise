@@ -48,11 +48,34 @@ export interface TianheTicket {
   readonly meta?: Readonly<Record<string, unknown>>
 }
 
+/**
+ * ── HOW FAR A TICKET GOT (G-7, P0) ──────────────────────────────────────────────────────────────
+ *
+ * `ok` answers 「did the dispatcher succeed at what it was asked to do」. That is NOT the same question
+ * as 「was this node's work done」, and collapsing the two made a hostless dispatch unlock its
+ * dependants. Measured (v3.2 §7.2, reproduced on the current HEAD by the lead):
+ *
+ *     A, B both `ok: true`; A never executed (no runner) — B still ran.
+ *     A's own output said 「节点已创建（portable），未执行」, i.e. the receipt TOLD the reader it did not
+ *     execute while `ok: true` told every consumer it succeeded.
+ *
+ * So the receipt states its phase. `created` means the node exists and nothing was executed;
+ * `executed` means a runner returned; `accepted` means the caller's acceptance step passed (a later
+ * concern — nothing produces it yet, and it exists so the vocabulary has room).
+ */
+export type TianhePhase = 'created' | 'executed' | 'accepted'
+
 /** What a runner may return. `ok:false` must carry a reason — silence is not a result. */
 export interface TianheReceipt {
   readonly ticketId: string
   readonly sessionId: string
   readonly ok: boolean
+  /**
+   * G-7: which phase this receipt describes. ADDED AS AN OPTIONAL FIELD so every existing reader keeps
+   * working; the dispatcher always sets it, and `readyNow` is what changed (it no longer treats
+   * `created` as 「done」).
+   */
+  readonly phase?: TianhePhase
   /** The node's own output. Free-form text; the dispatcher does not parse it. */
   readonly output?: string
   readonly error?: string
@@ -120,15 +143,30 @@ export async function dispatch(tickets: readonly TianheTicket[], options: Dispat
   const skipped: Array<{ ticketId: string; reason: string }> = []
 
   const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]))
-  const status = new Map<string, 'pending' | 'running' | 'ok' | 'failed' | 'skipped'>(
+  /**
+   * ── G-7: THE STATUS OF A TICKET IS ITS PHASE, NOT A BOOLEAN ────────────────────────────────────
+   *
+   * `ok` used to mean 「the dispatcher succeeded」, and 「成功」 was read as 「done」. So a ticket created
+   * without a runner (a legitimate outcome — see the no-runner branch) unlocked its dependants while its
+   * own output said 「未执行」. `status` now carries the phase; `readyNow` only accepts the two that
+   * describe actual execution.
+   *
+   * `'ok'` is kept as an ALIAS for `executed` so an existing reader that compares to `'ok'` keeps
+   * working; nothing in this file writes it any more except the runner-success branch, which is exactly
+   * an execution.
+   */
+  const status = new Map<string, 'pending' | 'running' | 'created' | 'ok' | 'executed' | 'accepted' | 'failed' | 'skipped'>(
     tickets.map((ticket) => [ticket.id, 'pending' as const]),
   )
 
-  /** A ticket may start when every blocker is `ok`; if any blocker failed, it can never start. */
+  /**
+   * A ticket may start when every blocker actually RAN. `created` does not unlock: the node exists, the
+   * work does not. `accepted` (a later concern) and `ok` (executed) both do.
+   */
   const readyNow = (ticket: TianheTicket): boolean => {
     for (const dependency of ticket.dependsOn ?? []) {
       const state = status.get(dependency)
-      if (state === 'ok') continue
+      if (state === 'ok' || state === 'executed' || state === 'accepted') continue
       if (state === undefined) return true
       /** Unknown blocker or a failed one: not ready. An unknown id is reported below. */
       return false
@@ -206,11 +244,17 @@ export async function dispatch(tickets: readonly TianheTicket[], options: Dispat
         ticketId: ticket.id,
         sessionId: spawn.sessionId,
         ok: true,
+        /**
+         * G-7: the receipt SAYS which phase it is. `ok: true` is honest — the dispatcher did what it was
+         * asked — but `phase: 'created'` is what stops a dependant from being unlocked by work that never
+         * happened. Both facts are on the object so neither reader has to infer the other.
+         */
+        phase: 'created',
         output: `节点已创建（${spawn.mode}），未执行：调用方未提供 runner`,
         ms: Date.now() - ticketStarted,
         ...(ticket.meta === undefined ? {} : { meta: ticket.meta }),
       })
-      status.set(ticket.id, 'ok')
+      status.set(ticket.id, 'created')
       emit({ type: 'ticket-done', ticketId: ticket.id, ok: true, ms: Date.now() - ticketStarted })
       return
     }
@@ -221,12 +265,14 @@ export async function dispatch(tickets: readonly TianheTicket[], options: Dispat
         ticketId: ticket.id,
         sessionId: spawn.sessionId,
         ok: result.ok,
+        /** G-7: a runner returned ⇒ this node actually EXECUTED. Its success is `ok`. */
+        phase: 'executed',
         ...(result.output === undefined ? {} : { output: result.output }),
         ...(result.error === undefined ? {} : { error: result.error }),
         ms: Date.now() - ticketStarted,
         ...(ticket.meta === undefined ? {} : { meta: ticket.meta }),
       })
-      status.set(ticket.id, result.ok ? 'ok' : 'failed')
+      status.set(ticket.id, result.ok ? 'executed' : 'failed')
       emit({ type: 'ticket-done', ticketId: ticket.id, ok: result.ok, ms: Date.now() - ticketStarted })
     } catch (error) {
       receipts.push({
@@ -252,10 +298,19 @@ export async function dispatch(tickets: readonly TianheTicket[], options: Dispat
     }
   }
 
-  /** Whatever is still pending has a blocker that will never succeed. Say which and why. */
+  /**
+   * Whatever is still pending has a blocker that will never succeed. Say which and why.
+   *
+   * G-7: 「succeeded」 here means the blocker RAN — `executed` / `ok` (the same phase, kept as an alias
+   * for existing readers). `created` is listed as a blocker on purpose: a node that exists but never
+   * executed did not unblock anything, and the reason string now says `=created` so a reader can tell
+   * 「never ran」 from 「failed」 without opening the receipt.
+   */
+  const ranSuccessfully = (state: string | undefined): boolean =>
+    state === 'ok' || state === 'executed' || state === 'accepted'
   for (const ticket of tickets) {
     if (status.get(ticket.id) !== 'pending') continue
-    const blockers = (ticket.dependsOn ?? []).filter((dependency) => status.get(dependency) !== 'ok')
+    const blockers = (ticket.dependsOn ?? []).filter((dependency) => !ranSuccessfully(status.get(dependency)))
     status.set(ticket.id, 'skipped')
     const reason =
       blockers.length > 0

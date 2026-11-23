@@ -35,6 +35,49 @@ jobs:
       - name: Show the runtime we are actually testing on
         run: node --version && npm --version
 
+      - name: Check out the siblings the adapter-entry criteria read
+        # lead §三十四：paradise 需要 **observer + memory** 两个兄弟仓。
+        # 证据：`bare-ignition…:30-31` `import('../../dsh-observer/index.js')`；`v277:32` 读 memory 目录。
+        #
+        # 依赖图里有两个环（graft↔memory、observer↔paradise），所以**没有哪个仓能靠「自己跑」过关**——
+        # 这不是布局瑕疵，是这批判据的主题：两个插件必须对同一份事实保持一致。
+        #
+        # `repository:` 不带 `ref:` ⇒ 兄弟仓**默认分支 HEAD**，不是本机状态。这带来一个 CI 之前没有的
+        # 能力（跨仓漂移会被发现），也意味着「本地全绿 ⇒ CI 绿」不再成立。
+        uses: actions/checkout@v4
+        with:
+          repository: corvus-dsh/dsh-observer
+          path: .siblings/dsh-observer
+
+      - uses: actions/checkout@v4
+        with:
+          repository: corvus-dsh/dsh-memory
+          path: .siblings/dsh-memory
+
+      - name: Place the siblings where the probes expect them
+        # `set -e` + `mv` 让失败变响：checkout 没产出目录 ⇒ mv 失败 ⇒ job 红。
+        # **不 fallback 成 skip** ——「取不到兄弟」与「兄弟一致」是两件事。
+        run: |
+          set -e
+          mv .siblings/dsh-observer ../dsh-observer
+          mv .siblings/dsh-memory ../dsh-memory
+          rm -rf .siblings
+          node -e "console.log('observer at', require('node:fs').realpathSync('../dsh-observer/index.js'))"
+          node -e "console.log('memory at', require('node:fs').realpathSync('../dsh-memory'))"
+
+      - name: Record which sibling revisions these criteria ran against
+        # 跨仓判据失败时先看这三行 —— 否则一小时花在错的仓里。
+        run: |
+          set -e
+          for sibling in dsh-observer dsh-memory; do
+            echo "sibling $sibling@$(git -C "../$sibling" rev-parse --short HEAD)"
+          done
+
+      - name: Runtime dependencies are empty and dev tooling is allowlisted
+        # B4-A 的「依赖为空门禁」。dependencies 会装进用户的运行时，必须永远为空；
+        # typescript 只能是精确锁版本的 devDependency（干净克隆里缺它的代价已实测）。
+        run: node scripts/check-runtime-deps.mjs
+
       - name: Install (no dependencies expected — this package has none)
         run: npm install --no-audit --no-fund
 

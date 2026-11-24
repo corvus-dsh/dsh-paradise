@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "未剥注释的源码文本断言基线（dsh-paradise 本仓实测）—— **计数只能减不能增**（lead §四十五.2 / §四十六.2）。",
+    "",
+    "这份文件**不进 all4**：它是每仓实测的事实，抄别的仓的数字就是让自己打印别人的事实。",
+    "同 closure.mjs 的 SAMPLES 教训（§44.5）：脚本同源，自校准事实各仓独立。",
+    "",
+    "减到 0 之后这个文件就是终态：maxRaw: 0 且 files: {}。",
+    "往这里加新条目 = 放宽门禁，判据 ③ 会拒绝（已修复的条目必须删掉，不许留虚高配额）。",
+    "",
+    "修法：把 readFileSync(...) 的结果过一遍 test/source-assertion.mjs 的 stripComments()。",
+    "加速建议（§四十六.3）：先改「断言某形状必须不存在」的那批 —— 它们若注释里写一句就会假绿。"
+  ],
+  "maxRaw": 19,
+  "files": {
+    "bundle-composer.test.mjs": 2,
+    "isolation.test.mjs": 8,
+    "upgrade-drill.test.mjs": 1,
+    "v102-seam-inventory.test.mjs": 5,
+    "v102-session-summary-guard.test.mjs": 1,
+    "v276-write-contract-refusal.test.mjs": 2
+  }
+}

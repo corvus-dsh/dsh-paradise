@@ -65,10 +65,23 @@ for (const [scopeName, scope] of Object.entries(scopes)) {
   }
 
   for (const file of files) {
-    /** `shared-sources.json` lives in scripts/, everything else is a .mjs — same directory. */
+    /**
+     * ── A DECLARED PATH MAY NAME A SUBDIRECTORY (added with `test/source-assertion.mjs`) ──────────
+     *
+     * The manifest used to imply `scripts/` for every entry, because every entry lived there. The
+     * shared `stripComments()` helper lives in `test/` — it is imported by criteria, not run as a
+     * gate — and its whole point is that FOUR repositories use ONE implementation. So the shape of
+     * an entry is now: a bare name means `scripts/<name>`; a name containing `/` is repo-relative.
+     *
+     * Adding the exception here rather than flattening the helper into `scripts/` is deliberate:
+     * the file belongs beside the criteria that import it, and a "move it for the gate's benefit"
+     * decision is exactly how a gate starts bending the code instead of the other way round.
+     */
     const hashes = new Map()
     for (const repo of available) {
-      const path = join(WORKSPACE, repo, 'scripts', file)
+      const path = file.includes('/')
+        ? join(WORKSPACE, repo, ...file.split('/'))
+        : join(WORKSPACE, repo, 'scripts', file)
       if (!existsSync(path)) {
         failures.push(`${scopeName} / ${file}: ${repo} 缺这个文件（声明里要求它存在）`)
         continue
@@ -109,7 +122,10 @@ if (all4Present.length === 4) {
     if (scopeName === 'all4') continue
     for (const file of scope.files ?? []) {
       const hashes = all4Present.map((repo) => {
-        const path = join(WORKSPACE, repo, 'scripts', file)
+        /** Same subdirectory rule as ① — a `/` in the entry means repo-relative. */
+        const path = file.includes('/')
+          ? join(WORKSPACE, repo, ...file.split('/'))
+          : join(WORKSPACE, repo, 'scripts', file)
         return existsSync(path) ? digestOf(path) : 'ABSENT'
       })
       if (new Set(hashes).size === 1) {

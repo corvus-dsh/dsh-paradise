@@ -31,14 +31,21 @@
         "check-readme-counts.mjs",
         "check-runtime-deps.mjs",
         "check-shared-sources.mjs",
+        "check-source-assertions.mjs",
         "check-test-numbers.mjs",
+        "check-utf8-no-bom.mjs",
         "handler-inventory.mjs",
         "move-gate.mjs",
         "run-gate.mjs",
         "shared-sources.json",
         "suite-observation.mjs",
+        "test/source-assertion.mjs",
         "type-check.mjs",
         "who-references.mjs"
+      ],
+      "_why": [
+        "check-source-assertions.mjs + test/source-assertion.mjs (lead §四十六.2): 判据类脚本尤其必须同源。实测：graft 有这两个文件、另三仓 ABSENT，而三仓合计还有 142 个读源码的测试文件完全不被这道门禁覆盖。「判据的行为差异比产品差异更难发现」——产品不一致会在集成时暴露，判据不一致只会让某个仓永远绿。**基线（docs/source-assertions.json）不进 all4**：它是每仓实测的事实（52/14/8/11 条各不同），抄 graft 的数字就是让别的仓打印别人的事实（同 closure.mjs 的 SAMPLES 教训，§44.5）。",
+        "check-utf8-no-bom.mjs (lead §四十六.4, P2): BOM 是「不报错的改变」——JSON.parse 能容忍它，所以它只让 diff 多一行、让第一个字符串少几个字节。与 bundle.mjs 的挂死、缓存的失败复用同类：**失败方式是沉默的**。沉默的失败只能靠判据抓，不能靠小心（我本轮正是靠 git diff 人工发现并回滚的）。"
       ]
     },
     "paradise+memory": {

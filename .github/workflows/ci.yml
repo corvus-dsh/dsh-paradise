@@ -73,6 +73,8 @@ jobs:
             echo "sibling $sibling@$(git -C "../$sibling" rev-parse --short HEAD)"
           done
 
+      - name: No text file carries a UTF-8 BOM
+        run: node scripts/check-utf8-no-bom.mjs
       - name: Runtime dependencies are empty and dev tooling is allowlisted
         # B4-A 的「依赖为空门禁」。dependencies 会装进用户的运行时，必须永远为空；
         # typescript 只能是精确锁版本的 devDependency（干净克隆里缺它的代价已实测）。
@@ -89,6 +91,8 @@ jobs:
       - name: Comments do not claim what the manifest no longer says
         run: node scripts/check-doc-claims.mjs
 
+      - name: Source-text assertions strip comments first
+        run: node scripts/check-source-assertions.mjs
       - name: Install (no dependencies expected — this package has none)
         run: npm install --no-audit --no-fund
 

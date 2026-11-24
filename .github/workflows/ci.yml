@@ -78,6 +78,11 @@ jobs:
         # typescript 只能是精确锁版本的 devDependency（干净克隆里缺它的代价已实测）。
         run: node scripts/check-runtime-deps.mjs
 
+      - name: The scripts that must be byte-identical actually are
+        # lead §三十七：共享文件不是一个集合，是两个作用域（all4 / paradise+memory）。
+        # 清单外的文件【允许】不同。清单自己也在 all4 里，否则「某仓少一条」会伪装成绿。
+        run: node scripts/check-shared-sources.mjs
+
       - name: CI checkout layout matches what the mv steps assume
         run: node scripts/check-ci-layout.mjs
 

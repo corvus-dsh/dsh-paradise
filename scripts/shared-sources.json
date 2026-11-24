@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "单一所有者：哪些 scripts/*.mjs 必须逐字节相同，以及对【哪几仓】相同。",
+    "",
+    "为什么必须分作用域（lead §三十七）：起初只有一个平面清单「四仓逐字节相同」，但实测 closure /",
+    "check-cycles / families / move-gate 在 memory 与 paradise 相同，在 graft 与 observer 各有自己的版本。",
+    "把那些放进 all4 会让 graft 与 observer 变红 —— 而它们现在是【合法的不同】。一个会误报的门禁，",
+    "最后一定被人调松，所以作用域必须写进数据，不能写成「其余三仓」这种相对说法。",
+    "",
+    "本清单包含它自己：清单自己也会分叉 —— 某仓的清单少一条，那个仓就不检查那条，而它是绿的。",
+    "一个把「未检查」伪装成「已通过」的清单，比没有清单更坏。自我引用不是循环论证：它比对的是",
+    "【字节相同】，不是语义正确。",
+    "",
+    "type-budget.mjs 必须【不在】任何清单里：它的 BASELINE / BASELINE_IDENTITIES 是每仓各自的，",
+    "四列全不同是合法的。判据 ③ 专门断言这一点，因为下一个人会顺手加上它。"
+  ],
+  "scopes": {
+    "all4": {
+      "repos": ["dsh-graft-slice", "dsh-memory", "dsh-observer", "dsh-paradise"],
+      "files": [
+        "burn-in.mjs",
+        "check-check-parity.mjs",
+        "check-ci-layout.mjs",
+        "check-doc-claims.mjs",
+        "check-readme-counts.mjs",
+        "check-runtime-deps.mjs",
+        "check-shared-sources.mjs",
+        "check-test-numbers.mjs",
+        "handler-inventory.mjs",
+        "run-gate.mjs",
+        "shared-sources.json",
+        "suite-observation.mjs",
+        "type-check.mjs",
+        "who-references.mjs"
+      ]
+    },
+    "paradise+memory": {
+      "repos": ["dsh-paradise", "dsh-memory"],
+      "files": ["check-cycles.mjs", "closure.mjs", "families.mjs", "move-gate.mjs"]
+    }
+  },
+  "mustStayDivergent": {
+    "files": ["type-budget.mjs"],
+    "why": "每仓的 BASELINE / BASELINE_IDENTITIES 不同，四列全不同是【合法】的。它一旦进清单，判据会红。"
+  }
+}

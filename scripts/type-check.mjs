@@ -19,8 +19,11 @@
  *   node scripts/type-check.mjs --grep NAME    # only diagnostics whose message mentions NAME
  *   node scripts/type-check.mjs --json
  *
- * It reads typescript from the workspace root (this package declares no dependencies, exactly like
- * closure.mjs) and exits 2 with a named reason when the compiler is unavailable — never a silent zero.
+ * It resolves typescript like everything else here: THIS package first (`devDependencies.typescript`,
+ * exact-pinned — see `check-runtime-deps.mjs`), then the workspace root as a fallback so a checkout that
+ * predates the declaration still works. RUNTIME `dependencies` remain empty on purpose; a compiler is dev
+ * tooling, not something a host should install. It exits 2 with a named reason when neither resolves —
+ * never a silent zero.
  */
 import { createRequire } from 'node:module'
 import { readdirSync, statSync } from 'node:fs'
@@ -162,49 +165,6 @@ const COMPILER_ARTIFACT = new Map([
   ['2339', { file: 'index.ts', match: /Property 'reason' does not exist on type '\{ ok: true; \}/u, why: 'strict:false does not narrow `!safety.ok`; strict:true reports 0 here' }],
 ])
 
-
-/**
- * ── ARTIFACT 改为**现测**，而不是手写白名单 ──────────────────────────────────────────────────────
- *
- * 移植到 observer 时实测到白名单的两个问题：
- *
- *   ① **它只登记了 graft-slice 的那一条**。observer 的 2353 不在名单里，于是被算成 CODE HEALTH。
- *   ② 更根本：白名单把「编译器口径造成的」写成了一条**记忆**。凡记忆都会过期 ——
- *      换一个仓、换一次 TS 版本、甚至 strict 下的措辞变化，判定就错。
- *
- * 实测到的措辞变化（同一条诊断，只改 strict）：
- *   strict:false  … does not exist in type '{ cwd: string; title?: string; id?: string; }'
- *   strict:true   … does not exist in type '{ cwd: string; title?: string | undefined; id?: string | undefined; }'
- * 所以在 strict:true 下按「code + 完整 message」找不到它 —— 一条**真实的** CODE HEALTH 被误判成 ARTIFACT。
- *
- * 现测判据：一条诊断是 ARTIFACT，当且仅当
- *   它在 strict:false 下出现、在 strict:true 下**同一文件同一行同一 code**不出现，
- *   并且它不在手写白名单里（白名单保留，用来标那些「行号也会变」的特例）。
- *
- * 行号在这里可以用：两次编译针对的是**同一份文件、同一批行号**，行号不是「跨编辑的身份」，
- * 而是「同一次运行内两次编译之间的对齐键」。这与「用行号当跨编辑身份」是两件事。
- */
-const strictTrueDiagnostics = (() => {
-  try {
-    const program = ts.createProgram(files, {
-      target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      strict: true,
-      noEmit: true,
-      skipLibCheck: true,
-      allowJs: false,
-    })
-    return ts.getPreEmitDiagnostics(program).map((d) => ({
-      file: d.file ? basename(d.file.fileName) : '(global)',
-      line: d.file ? d.file.getLineAndCharacterOfPosition(d.start).line : -1,
-      code: d.code,
-    }))
-  } catch {
-    return undefined // 编译器不可用 ⇒ 不改变既有判定
-  }
-})()
-
 const isArtifact = (row) => {
   for (const [code, spec] of COMPILER_ARTIFACT) {
     if (String(row.code) !== code) continue
@@ -212,9 +172,7 @@ const isArtifact = (row) => {
     if (!spec.match.test(row.message)) continue
     return true
   }
-  if (strictTrueDiagnostics === undefined) return false
-  const keepsInStrict = strictTrueDiagnostics.some((d) => d.file === row.file && d.line === row.line && d.code === row.code)
-  return !keepsInStrict
+  return false
 }
 
 const artifactWhy = (row) => {
@@ -297,7 +255,7 @@ if (onlyCode === undefined && onlyGrep === undefined && envRows.length > 0) {
     const n = envRows.filter((row) => row.code === code).length
     if (n > 0) console.log(`  ${String(code).padEnd(6)} ${String(n).padStart(3)}  ${why}`)
   }
-  console.log('  (do NOT "fix" these by editing code: package.json declares no dependencies, deliberately)')
+  console.log('  (do NOT "fix" these by editing code: package.json declares no RUNTIME dependencies, deliberately)')
   if (artifactRows.length > 0) {
     console.log(`COMPILER ARTIFACT: ${artifactRows.length} diagnostic(s) — caused by strict:false, not by the code`)
     for (const row of artifactRows) {

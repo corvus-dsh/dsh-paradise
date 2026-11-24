@@ -159,7 +159,7 @@ const declarationSpans = (() => {
     // closure.mjs exits 2 when it cannot load the TypeScript compiler API.
     const status = error.status ?? -1
     console.error(`families: closure --declarations failed (exit ${status}).`)
-    console.error('          RESOURCE condition: this package declares no dependencies and CI installs no')
+    console.error('          RESOURCE condition: this package declares no RUNTIME dependencies and CI installs only the declared devDependency (no')
     console.error('          typescript. Without the compiler there are NO spans, and a family table built')
     console.error('          on missing spans is worse than no table (that is how INCIDENT_MARKERS became 1427).')
     console.error('          NOT a pass and NOT a failure — re-run where the compiler is available.')

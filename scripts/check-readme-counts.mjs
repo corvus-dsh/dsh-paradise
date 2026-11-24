@@ -159,9 +159,16 @@ if (typeof script !== 'string') {
    *
    *   dev machine : `typescript` resolves upwards from the workspace root, all 546 run
    *                 → pass 546  skipped 0
-   *   CI          : this package declares no dependencies, `npm install` installs nothing, so 13
-   *                 compiler-dependent tests call `t.skip(RESOURCE_REASON)`
-   *                 → pass 533  skipped 13      (TD-M15 enumerates them)
+   *   CI          : `npm install` installs the DECLARED devDependency (`typescript`, exact pin — see
+   *                 `check-runtime-deps.mjs`), so since that declaration landed the 13
+   *                 compiler-dependent tests no longer skip for lack of a compiler
+   *                 → pass 546  skipped 0      (TD-M15 enumerates the 13 either way)
+   *
+   * The sentence here used to read 「this package declares no RUNTIME dependencies, `npm install` installs
+   * nothing」. That became FALSE the moment `devDependencies.typescript` was added, and it was false in
+   * the silent direction: the paragraph still described a 533/13 split that could no longer happen.
+   * `check-doc-claims.mjs` now fails a push when an unqualified 「declares no RUNTIME dependencies」 /
+   * 「installs only the declared devDependency」 survives beside a non-empty `devDependencies`.
    *
    * The README's claim is "this repository HAS 546 tests". That is environment-independent, and
    * `pass + skipped` is 546 in BOTH environments. What IS environment-dependent is how many of them

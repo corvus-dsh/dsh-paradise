@@ -33,8 +33,8 @@
 ```
 closure.mjs          6AB8FDB73B4E4CB6   == memory
 check-cycles.mjs     5B061466C7F3BCAD   == memory
-type-check.mjs       00E63B64EFC9A9BF   == memory
-families.mjs         EE5F3FDB9EC68652   == memory
+type-check.mjs       B510BA3D6BA37A4B   == memory
+families.mjs         1663B1D8E619992F   == memory
 who-references.mjs   5B0080DFE9F02D27   == memory
 move-gate.mjs        A7784C85DAFCBBBA   == memory
 ```

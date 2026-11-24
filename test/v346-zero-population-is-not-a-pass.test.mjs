@@ -27,7 +27,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -62,6 +62,19 @@ for (const tool of TOOLS) {
       assert.match(out, /VACUOUS/u, `${tool.label}: the output must say VACUOUS so nobody reads it as a pass:\n${out}`)
       assert.match(out, /NOT a pass/u, `${tool.label}: the output must say this is not a pass:\n${out}`)
       /**
+       * ── THE ANNOUNCEMENT MUST EQUAL THE INJECTION (lead §五十五.4) ──────────────────────────────
+       *
+       * Measured on the previous version: rewriting the announcement to print the DEFAULT path (while
+       * the tool kept reading the sandbox) left `v344` 3/3 and `v346` 9/9 green — three criteria in a
+       * row asked only 「那句话存在吗」, never 「那句话是真的吗」.
+       *
+       * A wrong announcement is WORSE than none: without one the reader knows they do not know; with
+       * a lying one the reader believes they are checking.
+       */
+      const expectedLine = `${tool.label}: src = ${resolve(empty)} (injected via ${tool.variable})`
+      assert.ok(out.includes(expectedLine),
+        `${tool.label}: the announcement must print the INJECTED absolute path, verbatim.\n  expected: ${expectedLine}\n  got:\n${out}`)
+      /**
        * The old verdicts are the thing being removed — a green word next to VACUOUS would still be
        * quotable by the next reader.
        */
@@ -71,12 +84,14 @@ for (const tool of TOOLS) {
     }
   })
 
-  test(`v346 ${tool.label} ②: a NONEXISTENT injected path is refused BY NAME`, () => {
+  test(`v346 ${tool.label} ②: a NONEXISTENT injected path is refused BY NAME, and the refusal names that path`, () => {
     const missing = join(tmpdir(), `v346-missing-${tool.script}-${process.pid}-${Date.now()}`)
     const { code, out } = runTool(tool, missing)
     assert.equal(code, 1, `${tool.label}: a nonexistent injected directory must exit 1, got ${code}:\n${out}`)
     assert.match(out, new RegExp(tool.variable, 'u'), `${tool.label}: the refusal must name ${tool.variable}:\n${out}`)
-    assert.match(out, /is not an existing directory/u, `${tool.label}: the refusal must say what is wrong:\n${out}`)
+    /** Same claim as ①, on the failure path: the path in the message is the path that was injected. */
+    assert.ok(out.includes(`${tool.variable} = ${resolve(missing)} is not an existing directory`),
+      `${tool.label}: the refusal must quote the injected path verbatim:\n${out}`)
   })
 
   test(`v346 ${tool.label} ③: a REAL tree still exits 0 and never says VACUOUS`, () => {

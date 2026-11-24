@@ -7,9 +7,15 @@
     "  diagnostic      —— 只影响日志与追踪（DSH_LOCK_TRACE）。",
     "  input-override  —— 改掉被测输入、或改掉门禁据以判断的数据。**必须自述**，格式 `injected via <变量名>`，走 stderr。",
     "",
+    "每个条目都要能被审：",
+    "  config / diagnostic 必须有 `why`（这个决定是谁做的、理由是什么）。",
+    "  input-override 必须有 `behavioural-evidence`：指向一个真实断言了「公告打印的路径 == 注入值」的测试；",
+    "  暂时没有就写 \"none\" 并给 `reason`。**登记缺口，而不是假装覆盖。**",
+    "",
     "两点必须写明，否则下一个维护者会自己发明规则：",
-    "  1. **config 与 diagnostic 不要求打印。** 要求 DSH_HOME / CI / GITHUB_TOKEN 打印只会变成噪声，",
+    "  1. **config 与 diagnostic 不要求打印，也不许打印。** 要求 DSH_HOME / CI / GITHUB_TOKEN 打印只会变成噪声，",
     "     宽一格的判据会惩罚正确代码，然后被第一个需要它的人关掉（B4-B-派工单 §四十八.2）。",
+    "     反向同样成立：**如果代码里已经打了 `injected via X`，那它就不是 config** —— 两个工件必须说法一致。",
     "  2. **为什么只有这三个类、不多不少。** 「改了输入」与「配置了运行环境」之间没有第四种关系；",
     "     而「我认为它不重要」不是一类 —— 那是没做决定，判据会红。",
     "",
@@ -17,13 +23,39 @@
     "抄别的仓的清单，就是让本仓打印别人的事实（同 closure.mjs 的 SAMPLES 教训，§44.5）。"
   ],
   "variables": {
-    "CI": "config",
-    "DSH_LOCK_TRACE": "diagnostic",
-    "GRAFT_CHECK_CYCLES_SRC": "input-override",
-    "GRAFT_CLOSURE_SRC": "input-override",
-    "GRAFT_MOVE_GATE_SRC": "input-override",
-    "GRAFT_SIMULATE_NO_TSC": "input-override",
-    "GRAFT_WHO_REFS_SRC": "input-override",
-    "PARADISE_STRICT_HOST": "config"
+    "CI": {
+      "class": "config",
+      "why": "由 CI 运行器设置；本仓只用它判断「是不是 CI 环境」，不改变被测输入。"
+    },
+    "DSH_LOCK_TRACE": {
+      "class": "diagnostic",
+      "why": "开启锁追踪日志（只影响产物之外的观测输出）。"
+    },
+    "GRAFT_CHECK_CYCLES_SRC": {
+      "class": "input-override",
+      "behavioural-evidence": "test/v346-zero-population-is-not-a-pass.test.mjs"
+    },
+    "GRAFT_CLOSURE_SRC": {
+      "class": "input-override",
+      "behavioural-evidence": "test/v346-zero-population-is-not-a-pass.test.mjs"
+    },
+    "GRAFT_MOVE_GATE_SRC": {
+      "class": "input-override",
+      "behavioural-evidence": "none",
+      "reason": "move-gate 要先能定位 src/index.ts 才走到公告之后；v138 只解析 --json 产物，没有比对过它打印的路径。"
+    },
+    "GRAFT_SIMULATE_NO_TSC": {
+      "class": "input-override",
+      "behavioural-evidence": "none",
+      "reason": "布尔开关，公告行里没有可比对的操作数；当前没有「设 1 与不设」的对照断言。"
+    },
+    "GRAFT_WHO_REFS_SRC": {
+      "class": "input-override",
+      "behavioural-evidence": "test/v346-zero-population-is-not-a-pass.test.mjs"
+    },
+    "PARADISE_STRICT_HOST": {
+      "class": "config",
+      "why": "让 bench 在不满足前提时**失败而不是跳过**（判定策略）。它只会让门禁更严格，不会让门禁更松，因此不是「改掉被测输入」。"
+    }
   }
 }

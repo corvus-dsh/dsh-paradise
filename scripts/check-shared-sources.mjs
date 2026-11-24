@@ -122,6 +122,44 @@ if (all4Present.length === 4) {
   }
 }
 
+/* ⑥ 负向：非 all4 的每一条都必须写出 why 与 td。 */
+for (const [scopeName, scope] of Object.entries(scopes)) {
+  if (scopeName === 'all4') continue
+  const entries = scope.entries ?? {}
+  for (const file of scope.files ?? []) {
+    const entry = entries[file]
+    if (entry === undefined) {
+      failures.push(
+        `⑥ ${scopeName} / ${file}: 窄作用域条目必须带 \`why\` 与 \`td\` —— ` +
+          '否则下一位读者只会看到「这两仓合法地不同」，不会知道那是「改进没做完」',
+      )
+      continue
+    }
+    if (typeof entry.why !== 'string' || entry.why.trim().length < 20) {
+      failures.push(`⑥ ${scopeName} / ${file}: \`why\` 缺失或太短（它要能区分「设计分歧」与「半修复」）`)
+    }
+    if (typeof entry.td !== 'string' || entry.td.trim().length === 0) {
+      failures.push(`⑥ ${scopeName} / ${file}: \`td\` 缺失（要么写工单号，要么写 「—」 并说明为何无需移植）`)
+    }
+  }
+}
+
+/* ⑦ 负向：窄作用域计数棘轮 —— 只能减不能增。 */
+const narrowedCount = Object.entries(scopes)
+  .filter(([scopeName]) => scopeName !== 'all4')
+  .reduce((total, [, scope]) => total + (scope.files ?? []).length, 0)
+const ratchet = manifest.narrowedRatchet?.maxNarrowed
+if (typeof ratchet !== 'number') {
+  failures.push('⑦ 缺少 narrowedRatchet.maxNarrowed —— 没有它，「把新文件塞进窄作用域」这条开脱路无人封口')
+} else if (narrowedCount > ratchet) {
+  failures.push(
+    `⑦ 窄作用域条目从 ${ratchet} 增到 ${narrowedCount} —— 计数棘轮只许减不许增。` +
+      '新增文件必须进 all4，或者先证明它确实只能窄（并解释为什么不能四仓一致）',
+  )
+} else if (narrowedCount < ratchet) {
+  notes.push(`⑦ 窄作用域条目已降到 ${narrowedCount}（棘轮现为 ${ratchet}）—— 把 narrowedRatchet.maxNarrowed 收紧到 ${narrowedCount}`)
+}
+
 for (const note of notes) console.log(`  note ${note}`)
 
 if (failures.length > 0) {

@@ -16,11 +16,17 @@
   ],
   "scopes": {
     "all4": {
-      "repos": ["dsh-graft-slice", "dsh-memory", "dsh-observer", "dsh-paradise"],
+      "repos": [
+        "dsh-graft-slice",
+        "dsh-memory",
+        "dsh-observer",
+        "dsh-paradise"
+      ],
       "files": [
         "burn-in.mjs",
         "check-check-parity.mjs",
         "check-ci-layout.mjs",
+        "check-cycles.mjs",
         "check-doc-claims.mjs",
         "check-readme-counts.mjs",
         "check-runtime-deps.mjs",
@@ -35,12 +41,46 @@
       ]
     },
     "paradise+memory": {
-      "repos": ["dsh-paradise", "dsh-memory"],
-      "files": ["check-cycles.mjs", "closure.mjs", "families.mjs", "move-gate.mjs"]
+      "repos": [
+        "dsh-paradise",
+        "dsh-memory"
+      ],
+      "files": [
+        "closure.mjs",
+        "families.mjs",
+        "move-gate.mjs"
+      ],
+      "entries": {
+        "closure.mjs": {
+          "why": "memory/paradise 把 mutable 标签收敛成单一 mutableLabel 并区分 const-mutated；graft/observer 在两条路径里各内联一次 `${name} (${kind})`。**半修复**：同源里同一个可变绑定，两条路径可能给出不同标签（v201-closure-label-consistency 证明这条约束存在）。",
+          "td": "B4-B/⑨ 移植 mutableLabel 单点格式化"
+        },
+        "families.mjs": {
+          "why": "**这一条是参数化，不是半修复**（lead 已逐行核实）：两个版本都含 `[\\w/]+` 修复（graft :50-53、paradise :76/:86），差异是把源文件名提成 SRC_FILE。",
+          "td": "—（无待移植修复；保留窄作用域是为了不强迫 graft/observer 接受 paradise 的 SRC_FILE 值）"
+        },
+        "move-gate.mjs": {
+          "why": "memory/paradise 的 resolveDeclaration(name, file) 带第二个可选参数 file，用于消除「同名声明分散在多个文件」的歧义（byName 是先到先得）；graft/observer 只按名解析。**半修复**：按名解析在多文件同名时会取到错的那一个。",
+          "td": "B4-B/⑩ 移植 resolveDeclaration 的 file 消歧"
+        }
+      }
     }
   },
+  "narrowedRatchet": {
+    "maxNarrowed": 3,
+    "_comment": [
+      "窄作用域条目的**计数棘轮**：只能减不能增（lead §三十八.2）。",
+      "",
+      "为什么需要它：can-red ⑤ 只抓「本来四仓相同、却被声明更窄」——那是一类开脱。它抓不到**另一条路**：",
+      "把一个**新**文件直接塞进窄作用域，从此没人要求它四仓一致。计数棘轮堵的是这一条。",
+      "",
+      "每移植完一条（并把它挪回 all4），这个数字必须跟着减 1。它只许减、不许增。"
+    ]
+  },
   "mustStayDivergent": {
-    "files": ["type-budget.mjs"],
+    "files": [
+      "type-budget.mjs"
+    ],
     "why": "每仓的 BASELINE / BASELINE_IDENTITIES 不同，四列全不同是【合法】的。它一旦进清单，判据会红。"
   }
 }

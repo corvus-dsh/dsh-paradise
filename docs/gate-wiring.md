@@ -31,11 +31,11 @@
 实测哈希（SHA-256 前 16 位）—— **不是手抄的**：
 
 ```
-closure.mjs          59AAA11C19BC486F   == memory
-check-cycles.mjs      BA95BFD7EC25D80A   == memory
+closure.mjs          B15B516B2BF16801   == memory
+check-cycles.mjs      53A1B20E13372E9E   == memory
 type-check.mjs       B510BA3D6BA37A4B   == memory
 families.mjs         1663B1D8E619992F   == memory
-who-references.mjs   CACE86746C593786   == memory
+who-references.mjs   F25D1628F5EBCDE7   == memory
 move-gate.mjs        FDFC858E35A02CFE   == memory
 ```
 

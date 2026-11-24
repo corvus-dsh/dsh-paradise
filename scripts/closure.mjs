@@ -57,6 +57,12 @@ const SRC = process.env.GRAFT_CLOSURE_SRC !== undefined && process.env.GRAFT_CLO
  */
 if (process.env.GRAFT_CLOSURE_SRC !== undefined && process.env.GRAFT_CLOSURE_SRC !== '') {
   console.error(`closure: src = ${SRC} (injected via GRAFT_CLOSURE_SRC)`)
+  /** 注入值必须是存在的目录（lead §五十三.3 ①）。 */
+  if (!existsSync(SRC) || !statSync(SRC).isDirectory()) {
+    console.error(`closure: GRAFT_CLOSURE_SRC = ${SRC} is not an existing directory`)
+    console.error('closure: point it at a copy of src/, or unset it to measure this repository.')
+    process.exit(1)
+  }
 }
 
 /**
@@ -632,6 +638,22 @@ const SAMPLES = ['scanThreat', 'planNegative', 'hitOf', 'renderHint', 'harvest']
 const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]
 
 if (isMain) {
+  /**
+   * ── 零人口不是通过（lead §五十三.3 ②）─────────────────────────────────────────────────────────
+   *
+   * 实测：把 `SRC` 指向一个**存在的空目录**，本脚本打印 `calibration samples: … NOT FOUND ×3`
+   * 并 **exit 0**。而那三行 `NOT FOUND` 在本仓是**合法输出**（每仓 `SAMPLES` 各不相同，函数改名后
+   * 就应该 NOT FOUND）——于是「被指向空树」与「本仓样本改名了」在当前输出上无法区分（§〇 34）。
+   *
+   * 注意这里量的是**人口**，不是样本：样本缺失可以是合法事实，**一个 `.ts` 都没有不是**。
+   * 所以判据落在「有没有东西可量」上，而不是落在「样本找没找到」上——后者会把正确代码罚掉。
+   */
+  if (sourceFiles().length === 0) {
+    console.log(`src     : ${SRC}`)
+    console.log('VACUOUS — no .ts file was found, so no closure can be measured.')
+    console.log('This is NOT a pass: NOT FOUND over an empty tree is indistinguishable from a renamed sample.')
+    process.exit(2)
+  }
   const targets = process.argv.slice(2).filter((arg) => !arg.startsWith('--'))
 
 /**

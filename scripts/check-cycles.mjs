@@ -1,6 +1,6 @@
 // 依赖图环检测：加 import 修类型错误时，唯一真正的危险是「引入环」。
 // 输出：节点数、边数、所有环（若有）。
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -42,6 +42,17 @@ const SRC = process.env.GRAFT_CHECK_CYCLES_SRC !== undefined && process.env.GRAF
  */
 if (process.env.GRAFT_CHECK_CYCLES_SRC !== undefined && process.env.GRAFT_CHECK_CYCLES_SRC !== '') {
   console.error(`check-cycles: src = ${SRC} (injected via GRAFT_CHECK_CYCLES_SRC)`)
+  /**
+   * ── 注入值必须能构成一棵可以被量的树（lead §五十三.3 ①）────────────────────────────────────
+   *
+   * 实测：指向一个不存在的目录时，这里是 `ENOENT … scandir` 的裸栈——非零，但读者拿到的是
+   * syscall 和路径。公告行已经点名了变量，所以这是「不体面」而不是「沉默」；一并修掉。
+   */
+  if (!existsSync(SRC) || !statSync(SRC).isDirectory()) {
+    console.error(`check-cycles: GRAFT_CHECK_CYCLES_SRC = ${SRC} is not an existing directory`)
+    console.error('check-cycles: point it at a copy of src/, or unset it to measure this repository.')
+    process.exit(1)
+  }
 }
 
 function walk (dir, out = []) {
@@ -54,6 +65,26 @@ function walk (dir, out = []) {
 }
 
 const files = walk(SRC)
+/**
+ * ── 零人口不是通过（lead §五十三.3 ②）───────────────────────────────────────────────────────────
+ *
+ * 实测：指向一个**存在的空目录**时，本脚本打印 `nodes: 0  edges: 0  unresolved: 0`，然后
+ * `ACYCLIC — no RUNTIME dependency cycle`，**exit 0**。
+ *
+ * 「图的环数」在空图上是 0 —— 这是真的，而且毫无价值：它与「我读到的每个模块都没有环」是同一个
+ * 输出，也与「这棵树一个文件都没有」是同一个输出。**两个不同的原因给出同一份输出时，断言那份输出
+ * 不区分它们**（§〇 34）。
+ *
+ * 正确的形态本仓已有两处，不需要发明：`verify-pure-move` 的 `VACUOUS / exit 2`、
+ * `move-gate` 的 `NOT FOUND — the gate cannot measure what it cannot locate`。
+ * 所以这里用**同一个词、同一个退出码**：说 VACUOUS，退 2，永不让「什么都没量到」被读成「通过」。
+ */
+if (files.length === 0) {
+  console.log(`src     : ${SRC}`)
+  console.log('VACUOUS — no .ts file was found, so there is no graph to check.')
+  console.log('This is NOT a pass: a cycle check over zero modules cannot fail.')
+  process.exit(2)
+}
 /**
  * ── 捕获 clause，好判定这条 import 是不是「仅类型」 ─────────────────────────────────────────────
  *

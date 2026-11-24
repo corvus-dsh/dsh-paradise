@@ -26,7 +26,7 @@
  *   node scripts/who-references.mjs GraftSource [GraftTape …]
  *   node scripts/who-references.mjs --json GraftSource
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -50,6 +50,12 @@ const SRC = process.env.GRAFT_WHO_REFS_SRC !== undefined && process.env.GRAFT_WH
  */
 if (process.env.GRAFT_WHO_REFS_SRC !== undefined && process.env.GRAFT_WHO_REFS_SRC !== '') {
   console.error(`who-references: src = ${SRC} (injected via GRAFT_WHO_REFS_SRC)`)
+  /** 注入值必须是一棵存在的目录（lead §五十三.3 ①）——否则是 ENOENT 裸栈而不是一句拒绝。 */
+  if (!existsSync(SRC) || !statSync(SRC).isDirectory()) {
+    console.error(`who-references: GRAFT_WHO_REFS_SRC = ${SRC} is not an existing directory`)
+    console.error('who-references: point it at a copy of src/, or unset it to measure this repository.')
+    process.exit(1)
+  }
 }
 
 const args = process.argv.slice(2)
@@ -71,6 +77,27 @@ function sourceFiles(dir) {
   }
   walk(dir)
   return out
+}
+
+/**
+ * ── 零人口不是通过（lead §五十三.3 ②）───────────────────────────────────────────────────────────
+ *
+ * 实测：指向一个**存在的空目录**时，本脚本打印 `declarations: 0 · references: 0 (files: none)`，
+ * **exit 0**。
+ *
+ * 「谁引用了 X」的答案是**空集**时，有两个完全不同的原因：**没有人引用**（结论），
+ * 或**一个文件都没扫到**（什么都没做）。两者输出一模一样，而它们意味着相反的事情——
+ * 前者可以拿去删代码，后者不能拿去做任何事。
+ *
+ * 与 `verify-pure-move` 的 `VACUOUS / exit 2` 同一个词、同一个退出码：说得出口的「我没量到」，
+ * 好过看起来正常的「没有引用」。
+ */
+const population = sourceFiles(SRC)
+if (population.length === 0) {
+  console.log(`src     : ${SRC}`)
+  console.log('VACUOUS — no .ts file was found, so "nothing references it" cannot be concluded.')
+  console.log('This is NOT a pass: an empty answer from an empty tree is not evidence about the declarations.')
+  process.exit(2)
 }
 
 /**

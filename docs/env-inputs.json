@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "环境的每一次读取都必须在这里被分过类 —— 这是「没有人做过的决定不许通过」的落点，不是一份可以随手补的清单。",
+    "",
+    "三个类：",
+    "  config          —— 真配置（DSH_HOME / CI / GITHUB_TOKEN / 模型端点）。改了它，被测输入不变。",
+    "  diagnostic      —— 只影响日志与追踪（DSH_LOCK_TRACE）。",
+    "  input-override  —— 改掉被测输入、或改掉门禁据以判断的数据。**必须自述**，格式 `injected via <变量名>`，走 stderr。",
+    "",
+    "两点必须写明，否则下一个维护者会自己发明规则：",
+    "  1. **config 与 diagnostic 不要求打印。** 要求 DSH_HOME / CI / GITHUB_TOKEN 打印只会变成噪声，",
+    "     宽一格的判据会惩罚正确代码，然后被第一个需要它的人关掉（B4-B-派工单 §四十八.2）。",
+    "  2. **为什么只有这三个类、不多不少。** 「改了输入」与「配置了运行环境」之间没有第四种关系；",
+    "     而「我认为它不重要」不是一类 —— 那是没做决定，判据会红。",
+    "",
+    "分类是**每仓各自的**事实：脚本不同，读到的变量不同（graft 有校验器依赖，memory 有数据目录与豁免表）。",
+    "抄别的仓的清单，就是让本仓打印别人的事实（同 closure.mjs 的 SAMPLES 教训，§44.5）。"
+  ],
+  "variables": {
+    "CI": "config",
+    "DSH_LOCK_TRACE": "diagnostic",
+    "GRAFT_CHECK_CYCLES_SRC": "input-override",
+    "GRAFT_CLOSURE_SRC": "input-override",
+    "GRAFT_MOVE_GATE_SRC": "input-override",
+    "GRAFT_SIMULATE_NO_TSC": "input-override",
+    "GRAFT_WHO_REFS_SRC": "input-override",
+    "PARADISE_STRICT_HOST": "config"
+  }
+}

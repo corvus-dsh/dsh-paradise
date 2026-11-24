@@ -137,6 +137,40 @@ if (!(rawHit === true && strippedHit === false)) {
   )
 }
 
+/**
+ * ── ⑤ THE DISCIPLINE LIVES IN THE BASELINE FILE, SO THE BASELINE MUST BE GUARDED ───────────────
+ *
+ * `docs/source-assertions.json` carries the ratchet rule in its `_comment`. A `--update` or a
+ * regeneration rewrites that file wholesale — and a lost `_comment` means the rule silently
+ * disappears while the file still LOOKS like it records something.
+ *
+ * > **把纪律放进数据文件，就得让门禁看住那段数据；否则它比「不存在」更坏 —— 看起来被记录了。**
+ *
+ * Two checks: the comment must be a non-empty array, and it must still carry the two sentences that
+ * make the rule actionable (the ratchet direction, and the B-metric note). Asserting a stable
+ * FRAGMENT rather than the whole text lets the wording improve without turning this red.
+ */
+const REQUIRED_FRAGMENTS = [
+  ['只减不能增', '棘轮方向'],
+  ['B=', 'B 口径（风险池）度量'],
+]
+const comment = baseline._comment
+if (!Array.isArray(comment) || comment.length === 0) {
+  failures.push(
+    '⑤ 基线缺少非空 `_comment` —— 棘轮纪律写在里面，摘掉它会让这个文件看起来「记录了规则」而没有',
+  )
+} else {
+  const joined = comment.join('\n')
+  for (const [fragment, why] of REQUIRED_FRAGMENTS) {
+    if (!joined.includes(fragment)) {
+      failures.push(
+        `⑤ 基线 \`_comment\` 里缺少「${fragment}」（${why}）—— 纪律被重写掉了。` +
+          '把这一句加回去；它必须是数据的一部分，不能只活在提交说明里。',
+      )
+    }
+  }
+}
+
 for (const note of notes) console.log(`  note ${note}`)
 if (failures.length > 0) {
   console.log('')

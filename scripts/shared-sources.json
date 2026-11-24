@@ -33,6 +33,7 @@
         "check-shared-sources.mjs",
         "check-test-numbers.mjs",
         "handler-inventory.mjs",
+        "move-gate.mjs",
         "run-gate.mjs",
         "shared-sources.json",
         "suite-observation.mjs",
@@ -47,27 +48,22 @@
       ],
       "files": [
         "closure.mjs",
-        "families.mjs",
-        "move-gate.mjs"
+        "families.mjs"
       ],
       "entries": {
         "closure.mjs": {
-          "why": "memory/paradise 把 mutable 标签收敛成单一 mutableLabel 并区分 const-mutated；graft/observer 在两条路径里各内联一次 `${name} (${kind})`。**半修复**：同源里同一个可变绑定，两条路径可能给出不同标签（v201-closure-label-consistency 证明这条约束存在）。",
-          "td": "B4-B/⑨ 移植 mutableLabel 单点格式化"
+          "why": "memory/paradise 把 mutable 标签收敛成单一 mutableLabel 并区分 const-mutated；graft/observer 在两条路径里各内联一次 `${name} (${kind})`。**半修复**：同源里同一个可变绑定，两条路径可能给出不同标签（v201-closure-label-consistency 证明这条约束存在）。现在 graft/observer 的**代码**已移植（mutableLabel + MUTATING_METHODS + mutableKind），剩下不能逐字节等同的是每仓各自的自校准事实：`SAMPLES` 必须是本仓真实函数名，以及编译器缺失时打印的那三个样本的实测数字 —— 把 graft 的数字抄进 observer 会让它打印别人的事实。",
+          "td": "B4-B/⑨ 代码已移植（graft/observer）；剩余差异 = 每仓自校准事实，按设计保留"
         },
         "families.mjs": {
           "why": "**这一条是参数化，不是半修复**（lead 已逐行核实）：两个版本都含 `[\\w/]+` 修复（graft :50-53、paradise :76/:86），差异是把源文件名提成 SRC_FILE。",
           "td": "—（无待移植修复；保留窄作用域是为了不强迫 graft/observer 接受 paradise 的 SRC_FILE 值）"
-        },
-        "move-gate.mjs": {
-          "why": "memory/paradise 的 resolveDeclaration(name, file) 带第二个可选参数 file，用于消除「同名声明分散在多个文件」的歧义（byName 是先到先得）；graft/observer 只按名解析。**半修复**：按名解析在多文件同名时会取到错的那一个。",
-          "td": "B4-B/⑩ 移植 resolveDeclaration 的 file 消歧"
         }
       }
     }
   },
   "narrowedRatchet": {
-    "maxNarrowed": 3,
+    "maxNarrowed": 2,
     "_comment": [
       "窄作用域条目的**计数棘轮**：只能减不能增（lead §三十八.2）。",
       "",

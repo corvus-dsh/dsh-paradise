@@ -32,7 +32,7 @@
 
 ```
 closure.mjs          6AB8FDB73B4E4CB6   == memory
-check-cycles.mjs      A8D36015C39CE898   == memory
+check-cycles.mjs      25631821756BE0D8   == memory
 type-check.mjs       B510BA3D6BA37A4B   == memory
 families.mjs         1663B1D8E619992F   == memory
 who-references.mjs   5B0080DFE9F02D27   == memory

@@ -76,8 +76,7 @@ function resolveRepo(explicit) {
 }
 
 /** Every test file's identity plus the runner's version — the whole invalidation key. */
-function inputDigest(REPO) {
-  /**
+function inputDigest(REPO) {  /**
    * ── A MISSING `test/` IS A MISS, NOT AN ERROR (measured) ────────────────────────────────────
    *
    * A throwaway skeleton declares its own `test` script and has no `test/` directory at all
@@ -216,11 +215,33 @@ export function observeSuite(options = {}) {
        * as the file's immutability. Both are checked; either mismatch is a MISS.
        */
       const tapDigest = createHash('sha256').update(String(stored?.tap ?? '')).digest('hex')
+      /**
+       * ── A FAILED OBSERVATION MUST NOT BE REUSED (measured twice, 2026-11-24) ──────────────────
+       *
+       * The digest keys on `test/` + `scripts/` files. A failure whose cause is NOT in those files —
+       * a full disk, a dead subprocess, a machine at load 40 — leaves the digest UNCHANGED, so the
+       * failing TAP kept matching and every subsequent `npm run check` re-read ONE bad observation
+       * as if it were current. Measured: 93 `ENOSPC` failures persisted across runs after the disk
+       * was freed, and the final `node --test` (which does not cache) was green the whole time.
+       *
+       * So the rule is directional:
+       *
+       *     failCount === 0  → the observation may be reused (the cache keeps its whole point:
+       *                        `check` stays fast, and a green suite is re-measured only when the
+       *                        tree actually changed);
+       *     failCount  > 0   → ALWAYS re-observe. A red result is cheap to re-derive and expensive
+       *                        to believe: its cause may be entirely outside the digest.
+       *
+       * NEGATIVE HALF: this must not turn `check` into a 30-minute command. A GREEN observation is
+       * still cached and still hits; only red ones are recomputed. `v338 ②` asserts both directions.
+       */
+      const cachedFail = Number(indexTap(String(stored?.tap ?? '')).fail ?? 0)
       if (
         stored?.digest === digest &&
         typeof stored.tap === 'string' &&
         stored.tap.length > 0 &&
-        stored.tapDigest === tapDigest
+        stored.tapDigest === tapDigest &&
+        cachedFail === 0
       ) {
         return { tap: stored.tap, index: indexTap(stored.tap), cached: true }
       }
@@ -298,3 +319,16 @@ export function observeSuite(options = {}) {
   }
   return { tap, index, cached: false }
 }
+
+/**
+ * ── THE DIGEST IS EXPOSED FOR TESTS, AND ONLY FOR THAT ──────────────────────────────────────────
+ *
+ * `v338` has to seed a cache that a previous run would have left for THIS tree, which means it needs
+ * the digest the real code would compute. Re-deriving it inside the test would be a SECOND
+ * implementation of the invalidation key — and two implementations of one rule drift, which is the
+ * defect this repository keeps recording.
+ *
+ * Named with a `__` prefix and a `ForTest` suffix so it reads as a seam at every call site rather
+ * than as part of the public surface.
+ */
+export const __inputDigestForTest = inputDigest

@@ -60,8 +60,40 @@ const files = walk(SRC)
  *   A  带 from：`import { A } from './x'` / `export * from './x'` / `import type { T } from './x'`
  *   B  副作用：  `import './x'`
  */
-const IMP_FROM = /(?:^|\n)[ \t]*(?:import|export)\b(?!\s*[.(])([^'"]*?)\bfrom\s+['"](\.[^'"]+)['"]/gu
+const IMP_FROM = /(?:^|\n)[ \t]*((?:import|export)\b(?!\s*[.(])[^'"]*?)\bfrom\s+['"](\.[^'"]+)['"]/gu
 const IMP_SIDE_EFFECT = /(?:^|\n)[ \t]*import\s+['"](\.[^'"]+)['"]/gu
+
+/**
+ * ── THE CLAUSE MUST CONTAIN THE KEYWORD, OR `import type` CAN NEVER BE RECOGNISED ───────────────
+ *
+ * MEASURED DEFECT (2026-11-24). The capture group used to start AFTER `import`/`export`:
+ *
+ *     /(?:^|\n)[ \t]*(?:import|export)\b(?!\s*[.(])([^'"]*?)\bfrom\s+.../u
+ *                                         ^ capture begins here — " type { A, B } "
+ *
+ * so `isTypeOnlyClause` received a clause that could never contain the word `import` or `export`,
+ * and its FIRST rule — `/\b(?:import|export)\s+type\b/` — was **dead code**. It could never match.
+ *
+ * Consequence, measured by feeding the three legal type-only shapes through the real parser:
+ *
+ *     import type { GraphNode, TaskGraph } from './graph.js'   → isTypeOnly false   ✗ WRONG
+ *     import type X from './x.js'                              → isTypeOnly false   ✗ WRONG
+ *     export type { GraphNodeView } from './graph-view.js'     → isTypeOnly false   ✗ WRONG
+ *     import { type A, type B } from './x.js'                  → isTypeOnly true    ✓
+ *     import { type A, B } from './x.js'                       → isTypeOnly false   ✓ (has a value)
+ *
+ * Two of those three false answers were REPORTED AS REAL RUNTIME CYCLES, which is why `graph.ts ⇄
+ * graph-view.ts` and `graph-goal-lock.ts ⇄ graph-v3.ts` appeared at all: both are held together only
+ * by `import type` / `export type` edges.
+ *
+ * **This is a criterion defect, not a code defect** — and the distinction matters, because the
+ * "fix" a false cycle invites is exactly the forbidden one: demoting a real value import to
+ * `import type` to silence the gate. Ironically, the gate was ALREADY treating type imports as
+ * values, so it was demanding that demotion.
+ *
+ * The repair is to widen the capture so the clause STARTS AT THE KEYWORD. `isTypeOnlyClause` is
+ * unchanged: its rules now describe the text they actually receive.
+ */
 
 /**
  * 这条 import / export 是否**只在类型位置**使用。

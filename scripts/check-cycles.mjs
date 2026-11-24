@@ -30,6 +30,19 @@ const REPO = fileURLToPath(new URL('..', import.meta.url))
 const SRC = process.env.GRAFT_CHECK_CYCLES_SRC !== undefined && process.env.GRAFT_CHECK_CYCLES_SRC !== ''
   ? resolve(process.env.GRAFT_CHECK_CYCLES_SRC)
   : join(REPO, 'src')
+/**
+ * ── 注入点必须自述（lead §五十.4）───────────────────────────────────────────────────────────────
+ *
+ * 这个变量让测试避开真实树，是好事；但它也使「被检查的树」变成外部输入。**同一份报告，
+ * 一次指着真树、一次指着空副本，形状一模一样**——所以只靠观察输出无法判断这次检查的是谁。
+ *
+ * 变量生效时打印一行，格式与 `closure.mjs` / `move-gate.mjs` / `verify-pure-move.mjs` 相同：
+ *
+ *     check-cycles: src = <绝对路径> (injected via GRAFT_CHECK_CYCLES_SRC)
+ */
+if (process.env.GRAFT_CHECK_CYCLES_SRC !== undefined && process.env.GRAFT_CHECK_CYCLES_SRC !== '') {
+  console.error(`check-cycles: src = ${SRC} (injected via GRAFT_CHECK_CYCLES_SRC)`)
+}
 
 function walk (dir, out = []) {
   for (const e of readdirSync(dir)) {

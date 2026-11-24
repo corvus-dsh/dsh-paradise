@@ -41,6 +41,16 @@ const REPO = fileURLToPath(new URL('..', import.meta.url))
 const SRC = process.env.GRAFT_WHO_REFS_SRC !== undefined && process.env.GRAFT_WHO_REFS_SRC !== ''
   ? resolve(process.env.GRAFT_WHO_REFS_SRC)
   : join(REPO, 'src')
+/**
+ * ── 注入点必须自述（lead §五十.4）───────────────────────────────────────────────────────────────
+ *
+ * 变量生效时打印一行，格式与 `closure.mjs` / `check-cycles.mjs` / `move-gate.mjs` 相同。
+ * 这个脚本的答案是「谁引用了 X」——**空答案**既可能是「没人引用」、也可能是「扫了一棵空树」。
+ * 没有这一行，两者在输出上完全一样，而它们意味着相反的结论。
+ */
+if (process.env.GRAFT_WHO_REFS_SRC !== undefined && process.env.GRAFT_WHO_REFS_SRC !== '') {
+  console.error(`who-references: src = ${SRC} (injected via GRAFT_WHO_REFS_SRC)`)
+}
 
 const args = process.argv.slice(2)
 const asJson = args.includes('--json')

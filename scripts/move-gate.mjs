@@ -45,6 +45,19 @@ const REPO = fileURLToPath(new URL('..', import.meta.url))
 const SRC = process.env.GRAFT_MOVE_GATE_SRC !== undefined && process.env.GRAFT_MOVE_GATE_SRC !== ''
   ? resolve(process.env.GRAFT_MOVE_GATE_SRC)
   : join(REPO, 'src')
+/**
+ * ── 注入点必须自述（lead §五十.4）───────────────────────────────────────────────────────────────
+ *
+ * 变量生效时打印一行，格式与 `closure.mjs` / `check-cycles.mjs` / `verify-pure-move.mjs` 相同：
+ *
+ *     move-gate: src = <绝对路径> (injected via GRAFT_MOVE_GATE_SRC)
+ *
+ * 为什么它必须存在：这个变量既改变本脚本测量的树，又**转发**给 closure.mjs。少一行日志时，
+ * 报告只能证明「有一个门槛跑过了」，无法证明「它跑的是哪棵树」——而改道正是最容易伪装成通过的做法。
+ */
+if (process.env.GRAFT_MOVE_GATE_SRC !== undefined && process.env.GRAFT_MOVE_GATE_SRC !== '') {
+  console.error(`move-gate: src = ${SRC} (injected via GRAFT_MOVE_GATE_SRC)`)
+}
 const INDEX = join(SRC, 'index.ts')
 const TOOL = join(REPO, 'scripts', 'closure.mjs')
 

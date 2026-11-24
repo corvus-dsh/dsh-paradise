@@ -138,6 +138,17 @@ function checkCopies () {
 // ── argument parsing ────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
 const simulateMissingCompiler = argv.includes('--simulate-missing-compiler') || process.env.GRAFT_SIMULATE_NO_TSC === '1'
+/**
+ * ── 注入点必须自述（lead §五十.4）───────────────────────────────────────────────────────────────
+ *
+ * 变量生效时打印一行，格式与 `closure.mjs` / `check-cycles.mjs` / `move-gate.mjs` 相同。
+ * 这个变量把「机器上没有编译器」这件事**模拟**成环境事实：它让 RESOURCE 分支可达。
+ * 没有这一行时，一次 RESOURCE 读数既可能来自真实缺编译器、也可能来自一次刻意模拟——
+ * **两种原因给出同一份输出，而这正是本节要消掉的东西。**
+ */
+if (process.env.GRAFT_SIMULATE_NO_TSC === '1') {
+  console.error('run-gate: missing-compiler simulation is ON (injected via GRAFT_SIMULATE_NO_TSC)')
+}
 const copiesOnly = argv.includes('--check-copies')
 const positional = argv.filter((arg, index) => {
   if (arg === '--simulate-missing-compiler' || arg === '--check-copies') return false

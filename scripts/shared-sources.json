@@ -41,6 +41,7 @@
         "suite-observation.mjs",
         "test/source-assertion.mjs",
         "test/v342-strip-comments-correctness.test.mjs",
+        "test/v344-injections-announce-themselves.test.mjs",
         "test/vacuous-repo.mjs",
         "type-check.mjs",
         "who-references.mjs"
@@ -49,7 +50,8 @@
         "check-source-assertions.mjs + test/source-assertion.mjs (lead §四十六.2): 判据类脚本尤其必须同源。实测：graft 有这两个文件、另三仓 ABSENT，而三仓合计还有 142 个读源码的测试文件完全不被这道门禁覆盖。「判据的行为差异比产品差异更难发现」——产品不一致会在集成时暴露，判据不一致只会让某个仓永远绿。**基线（docs/source-assertions.json）不进 all4**：它是每仓实测的事实（52/14/8/11 条各不同），抄 graft 的数字就是让别的仓打印别人的事实（同 closure.mjs 的 SAMPLES 教训，§44.5）。",
         "check-utf8-no-bom.mjs (lead §四十六.4, P2): BOM 是「不报错的改变」——JSON.parse 能容忍它，所以它只让 diff 多一行、让第一个字符串少几个字节。与 bundle.mjs 的挂死、缓存的失败复用同类：**失败方式是沉默的**。沉默的失败只能靠判据抓，不能靠小心（我本轮正是靠 git diff 人工发现并回滚的）。",
         "test/vacuous-repo.mjs (lead §四十七.4, P1): 「判据必须只依赖它自己构造的输入」的共享实现。四仓同源，因为这是**判据的行为**——行为差异比产品差异更难发现。",
-        "test/v342-strip-comments-correctness.test.mjs (lead §四十八.4): `stripComments` 决定全部 53+ 条源码断言的可信度。它一旦退化（把字符串里的 // 也剥掉），**所有断言会集体变松而没有一条会红**，因为输入仍然「看起来」正常。所以这个工具需要自己的判据，且四仓同源。"
+        "test/v342-strip-comments-correctness.test.mjs (lead §四十八.4): `stripComments` 决定全部 53+ 条源码断言的可信度。它一旦退化（把字符串里的 // 也剥掉），**所有断言会集体变松而没有一条会红**，因为输入仍然「看起来」正常。所以这个工具需要自己的判据，且四仓同源。",
+        "test/v344-injections-announce-themselves.test.mjs (lead §五十.4, P2): 纪律是「凡为可测性开的环境变量，被使用时必须打印一行『我改了哪个输入』」。按这条去数，实际找到的**不是裁定里说的三个，而是七个**（closure / check-cycles / move-gate / verify-pure-move / who-references / run-gate / verify-bundle）——**「我记得补过哪些」本身就是不可靠的**，所以这条必须机械化。四仓同源，因为它是**判据的行为**；而判据的行为差异比产品差异更难发现。"
       ]
     },
     "paradise+memory": {

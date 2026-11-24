@@ -42,6 +42,24 @@ const SRC = process.env.GRAFT_CLOSURE_SRC !== undefined && process.env.GRAFT_CLO
   : join(REPO, 'src')
 
 /**
+ * ── 注入点必须自述（lead §五十.4）───────────────────────────────────────────────────────────────
+ *
+ * 本仓的判据都在打「结论不要取决于它不控制的东西」；这个环境变量是**反向**的：**被检查的那棵
+ * 树可以被外部换掉，而门禁不知道**。一次「指向空目录因此通过」与一次「自己通过」打印出来的
+ * 报告形状完全相同，所以只看输出分不出真绿和改道绿。
+ *
+ * 规则（与 check-cycles / move-gate / run-gate / who-references / verify-pure-move 同一格式）：
+ * 变量真正生效时打印一行，格式可被判据 grep：
+ *
+ *     <tool>: <what> = <绝对路径> (injected via <变量名>)
+ *
+ * 未生效时不打印——这半条同样重要：一行**永远存在**的说明等于没有说明。
+ */
+if (process.env.GRAFT_CLOSURE_SRC !== undefined && process.env.GRAFT_CLOSURE_SRC !== '') {
+  console.error(`closure: src = ${SRC} (injected via GRAFT_CLOSURE_SRC)`)
+}
+
+/**
  * ── THE ONE FORMATTER FOR A MUTABLE LABEL ─────────────────────────────────────────────────────
  *
  * `closureOf`（`--cluster <name>`）与 `subBlockClosureOf`（`--block`）都产出一个

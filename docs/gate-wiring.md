@@ -31,12 +31,12 @@
 实测哈希（SHA-256 前 16 位）—— **不是手抄的**：
 
 ```
-closure.mjs          6AB8FDB73B4E4CB6   == memory
-check-cycles.mjs      25631821756BE0D8   == memory
+closure.mjs          59AAA11C19BC486F   == memory
+check-cycles.mjs      BA95BFD7EC25D80A   == memory
 type-check.mjs       B510BA3D6BA37A4B   == memory
 families.mjs         1663B1D8E619992F   == memory
-who-references.mjs   5B0080DFE9F02D27   == memory
-move-gate.mjs        A7784C85DAFCBBBA   == memory
+who-references.mjs   CACE86746C593786   == memory
+move-gate.mjs        FDFC858E35A02CFE   == memory
 ```
 
 **`type-budget.mjs` 不在上面那张表里，而且不能进去。** 结构同源，**基线本地**：

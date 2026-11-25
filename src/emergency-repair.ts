@@ -179,6 +179,25 @@ export function createEmergencyRepair(options: EmergencyRepairOptions) {
           text: '开始诊断并产出修复脚本',
           mode: 'queue',
           origin: 'plugin:paradise:repair-trigger',
+          /**
+           * ── N3：一次 repair 只允许 **1** 次模型调用 ──────────────────────────────────────────────
+           *
+           * `session.trigger` 的实现里有一个 `onTrigger` 钩子，harness 把它接到 `executeSession()` ——
+           * 那个函数会读日志、拼对话、再调 `llm.generate`。于是旧的路径是：
+           *
+           *     emergency-repair.ts:173  llm.generate(...)   ← 第 1 次（产出诊断）
+           *     emergency-repair.ts:178  session.trigger(...) → onTrigger → executeSession()
+           *                                                    → llm.generate(...)  ← 第 2 次
+           *
+           * 两次调用烧两份额度，而**第二次的结果被丢弃**（正文只用第 1 次的 `generation.text`）。
+           * 更糟的是它把第 2 次的答案注入了会话，于是 transcript 里出现一段与 `generation` 无关的
+           * 文字 —— 读者会以为那是诊断结论。
+           *
+           * 修法：`execute` 显式关掉。调用方**已经**拿到模型输出（`generation`），再让适配器自己
+           * 跑一遍模型不是「启动」，是重复计费。`harness.ts` 里那句注释写着同一件事：
+           * 「Wiring the model into `onTrigger` as well would call it twice per repair.」
+           */
+          execute: false,
         } as TurnTrigger)
 
         if (generation.error !== undefined) {

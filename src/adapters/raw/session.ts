@@ -240,6 +240,21 @@ export function createRawSessionAdapter(options: RawSessionOptions): SessionAdap
       }
       append(ref.id, [{ type: 'trigger/admitted', data: { text: trigger.text, mode: trigger.mode, origin: trigger.origin } }])
       append(ref.id, [{ type: typeFor('visible'), data: { text: trigger.text, source: { kind: trigger.origin } } }])
+      /**
+       * ── N3：`execute ?? true` —— 调用方已经执行过模型时不要再执行一次 ────────────────────────────
+       *
+       * 内容（`trigger/admitted` 与那条可见文本）**照写**：调用方要推的那句话确实进了会话。
+       * 跳过的只有 `onTrigger` —— 它是「执行器」钩子，而 `execute: false` 的意思正是
+       * 「执行器由我负责，你只负责把话放进去」。
+       *
+       * 这个开关存在的原因写在协议里（`TurnTrigger.execute`）：`emergency-repair` 先
+       * `llm.generate` 拿到诊断，再 `trigger` 把结果推进队列；如果这里也跑一遍 `onTrigger`
+       * （它接到 `executeSession` → `llm.generate`），一次 repair 会**烧两次额度**，而第二次的
+       * 答案被丢弃、还会被注入会话让读者误以为是诊断结论。
+       */
+      if (trigger.execute === false) {
+        return { ok: true, stage: 'trigger', warnings: ['调用方已执行（execute:false）：只写入了触发内容，未运行 onTrigger'] }
+      }
       try {
         await options.onTrigger(ref, trigger, readAll(ref.id))
       } catch (error) {

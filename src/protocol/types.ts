@@ -118,6 +118,20 @@ export interface TurnTrigger {
    * says `false` here instead of silently escalating.
    */
   readonly fallbackModes?: boolean
+  /**
+   * ── N3：让适配器**不要**自己执行模型。默认 true（保持既有行为）────────────────────────────────
+   *
+   * `session.trigger` 的 `onTrigger` 钩子可以接一段「读日志 → 调模型 → 把答案写回会话」的实现
+   * （`harness.ts` 的 `executeSession`）。对多数调用方那是对的：它们要的就是「让它跑起来」。
+   *
+   * 但对**已经自己调用过模型**的调用方（`emergency-repair.ts`：它先 `llm.generate` 拿到诊断，
+   * 再用 `trigger` 把结果推进队列），再让适配器跑一遍模型就是**两次计费**，而第二次的结果被丢弃。
+   * 那条调用路径上第二次的答案还会被注入会话，读者会以为那是诊断结论。
+   *
+   * 所以协议里必须有一个明确的「我已经执行过了」的说法 —— 否则那个开关只能靠调用方约定，
+   * 而约定不是协议。
+   */
+  readonly execute?: boolean
 }
 
 /** One entry of a session's event log, as the adapter is willing to expose it. */

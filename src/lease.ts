@@ -23,7 +23,7 @@
  */
 
 import type { LeaseAdapter, LeaseRecord, LeaseRequest } from './protocol/index.js'
-import { isLeaseExpired } from './protocol/index.js'
+import { isLeaseExpired, leaseOwnedBy } from './protocol/index.js'
 
 /** The outcome of running a body under a lease. */
 export interface WithLeaseResult<T> {
@@ -119,9 +119,33 @@ export async function withLease<T>(
      * though the body returned cleanly. Saying "ok" here would be the silent version of a lost update.
      */
     const current = await adapter.inspect(key)
-    if (isLeaseExpired(current, Date.now()) && current?.owner !== lease.owner) {
-      warnings.push(`租约在正文执行期间过期（epoch=${lease.epoch}，现任=${current?.owner ?? '无'}）`)
-      return { ok: false, code: 'LEASE_LOST', reason: '正文执行期间租约已过期', lease, warnings }
+    /**
+     * ── D3：判据是「**我们是否还持有**」，不是「它是否过期」──────────────────────────────────────
+     *
+     * 旧条件 `isLeaseExpired(current) && current?.owner !== lease.owner` 要求**两件事同时成立**才报
+     * `LEASE_LOST`。于是最常见的那一路反而漏了：正文跑完之后租约**已被继任者取得、且尚未过期**——
+     * 这正是「另一个进程已经在改我们刚改过的状态」，而 `isLeaseExpired` 返回 false，整条判定短路，
+     * 函数返回 `ok: true`。**丢更新被报成了成功。**
+     *
+     * 而且「过期」这个理由本身是多余的：`leaseOwnedBy` 已经同时比较 owner 与 epoch（那条 fence 的
+     * 注释写着两个理由：id 复用、以及 torn write 下的同 epoch 不同 owner）。所有权不成立 ⇒ 我们不
+     * 再持有，无论它过没过期。
+     *
+     * 自我接管的情况必须仍然为真：同一 owner、同一 epoch ⇒ 仍然是我们 ⇒ 不算丢失。
+     */
+    if (!leaseOwnedBy(current, lease) && current !== undefined) {
+      warnings.push(
+        `租约在正文执行期间易主（epoch=${lease.epoch}，现任=${current.owner ?? '无'}@${current.epoch ?? '?'}）`,
+      )
+      return { ok: false, code: 'LEASE_LOST', reason: '正文执行期间租约已被其它持有者接管', lease, warnings }
+    }
+    /**
+     * `current === undefined`（键已消失）是**另一种**事实：没有人持有，也就没有人抢。旧代码把
+     * undefined 交给 `isLeaseExpired`（它对 undefined 返回 true），于是「键被删掉」被读成「过期」——
+     * 那是把「不存在」与「过期」混成一句。这里显式分开，并记一条 warning 而不是失败。
+     */
+    if (current === undefined) {
+      warnings.push('租约在正文执行期间已不存在（键被删除或存储被清理）')
     }
     return { ok: true, value, lease, warnings }
   } catch (error) {

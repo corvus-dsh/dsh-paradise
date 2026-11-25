@@ -47,6 +47,8 @@ import { PUBLISH_CAPABILITIES } from './adapters/dsh/publish.js'
 import { ProtocolError, bindHost, isParadiseHost } from './protocol/index.js'
 import { createDshAdapters, DSH_ADAPTER_NAME } from './adapters/dsh/index.js'
 import { deleteSession, verifyDeletion } from './adapters/dsh/delete.js'
+/** S9 / N3: the repair constructor, so the "one repair, one model call" criterion can count calls. */
+import { createEmergencyRepair } from './emergency-repair.js'
 import {
   BRIEFING_ID_PREFIX,
   InjectShapeError,
@@ -613,5 +615,16 @@ export const paradiseInternals = {
   /* the write machinery, exposed for the plugins' own rollback and for tests */
   deleteSession,
   verifySessionDeletion,
+  /**
+   * ── S9 / N3：emergency repair 的构造器，为「一次 repair 只计费一次」的判据而暴露 ──────────────
+   *
+   * 它不是新的公开能力：`harness.ts` 已经在用它组装 supervisor 的修复路径（`createHarness` 里
+   * `createEmergencyRepair(...)`）。放进 `paradiseInternals` 而不是顶层导出，是因为它**只对测试与
+   * 本仓的 harness 有意义** —— 外部调用方要的是 `createHarness`，不是自己拼一个 repair。
+   *
+   * 为什么必须能构造它：N3 的判据要**数 `llm.generate` 的调用次数**。用 `createHarness` 的全链路
+   * 去数，会把 supervisor / pid 探测 / 报告写的噪声一起卷进来，红的时候分不清是哪一层多调了一次。
+   */
+  createEmergencyRepair,
   VERSION,
 }

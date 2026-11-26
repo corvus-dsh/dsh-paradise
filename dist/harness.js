@@ -5554,6 +5554,19 @@ export function createHarness(config               )                 {
    * Here, "starting" means: hand the session's own material (its `developer/message` setup and its
    * `user/message` brief) to the model, and record the answer back into the session.
    *
+   * ── AND IT COSTS A MODEL CALL, WHICH IS WHY CALLERS MUST SAY `execute: false` ────────────────
+   *
+   * `onTrigger` → `executeSession` → `llm.generate` (below). So a caller that has ALREADY got its own
+   * answer from the model must not let this run as well: that is two generations for one repair, and
+   * the second one's text gets injected into the transcript where a reader will mistake it for the
+   * diagnosis. `emergency-repair.ts:200` is that caller — it passes `execute: false`, and the raw
+   * session adapter honours the flag (`adapters/raw/session.ts`).
+   *
+   * This paragraph exists because the comment that used to sit in its place said `onTrigger` does
+   * NOTHING here — and 20 lines below, it called the model. A comment that contradicts its own file
+   * is worse than no comment: it invites the next reader to wire a second call 「just to be safe」,
+   * which is the exact defect N3 fixed.
+   *
    * WHY IT LIVES HERE AND NOT IN THE ADAPTER: the adapter must be usable with NO model at all (a session
    * store is a session store). The model is the harness's business, so the harness supplies the closure —
    * and when it cannot, the adapter honestly reports `trigger: false` through its capability probe.

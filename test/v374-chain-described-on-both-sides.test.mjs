@@ -63,27 +63,25 @@ test('v374 ③ (N2): the flag is honoured in the IMPLEMENTATION, not just descri
     '③ emergency-repair 必须真的传 execute:false（不是只在注释里写）')
 })
 
-test('v374 ④ (N3): the move account closes — 77 moved, 72 net, and the 5 explained', () => {
+test('v374 ④ (N2): neither file may re-introduce the "does NOTHING" lie in any wording', () => {
   /**
-   * 判据读 ARCHITECTURE.md 的进度段，要求**两个数字都在**且差额被点明。
+   * ── R1（S15）：这一条原本读 **graft 的** `ARCHITECTURE.md` 来验 N3 的行数账 ─────────────────
    *
-   * 第一版只看**单行**，而文档把「搬 77 行」与「净 −72」写在相邻两行（一是登记行、一是账目段）。
-   * 那是判据的读法太窄：N3 要的是**这一簇的账**能对上，不是「这两个数必须在同一行」。
-   * 所以改成读那一簇的**段落窗口**（登记行 + 其后三行）。
+   * 两个后果，都是真实的：
+   *   1. **graft 的一次纯移动能让 paradise 变红。** 实测：`v374` 用 `lines.slice(rowAt, rowAt + 4)`
+   *      定位账目段；graft 合入第 2、3 簇的登记行后，账目段从第 447 行被推到第 454 行，
+   *      于是这条 paradise 的判据红了 —— **而 N2 的账目一个字都没变**。
+   *   2. 判据绑的是**位置**（「登记行之后 4 行内」），不是**性质**（「这一簇的账能对上」）。
+   *      本批已记录四次同形，这是第五次。
+   *
+   * 处置：**账目断言移回 graft 自己的测试**（`v378`，与它所读的文件同仓），paradise 这一条只管
+   * 「两侧都不许再说假话」—— 那是 N2 的性质，也是本文件唯一该管的事。
+   *
+   * 纪律：**一个测试仓读另一个仓的文件，必须显式声明耦合**。它没有声明，所以它是一处意外连接。
    */
-  const arch = readFileSync(join(ROOT, '..', 'dsh-graft-slice', 'ARCHITECTURE.md'), 'utf8')
-  const lines = arch.split('\n')
-  const rowAt = lines.findIndex((text) => /open-background-work/u.test(text) && /登记|core\//u.test(text))
-  assert.ok(rowAt >= 0, '④ ARCHITECTURE 必须有一行登记新模块')
-
-  const window = lines.slice(rowAt, rowAt + 4).join('\n')
-  const moved = Number((window.match(/(\d+)\s*行/u) ?? [])[1] ?? NaN)
-  assert.ok(Number.isFinite(moved),
-    `④ 必须写出搬了多少行，实测窗口：${window.slice(0, 220)}`)
-
-  assert.ok(/净\s*[−-]?\s*\d+|−\s*\d+/u.test(window),
-    `④ 必须写出净变化，实测窗口：${window.slice(0, 220)}`)
-
-  assert.ok(/import|分隔|re-export|空行/u.test(window),
-    `④ 差额必须被解释（import / 分隔 / re-export / 空行中的至少一项）—— 两个数字并置而不解释，正是 N3 那处误导：${window.slice(0, 300)}`)
+  for (const [name, text] of [['harness.ts', harness], ['emergency-repair.ts', emergency]]) {
+    assert.ok(!/does\s+NOTHING/iu.test(text), `④ ${name} 不得再出现「does NOTHING」`)
+    assert.ok(!/什么都不做/u.test(text), `④ ${name} 不得再出现「什么都不做」`)
+    assert.ok(!/has\s+no\s+effect/iu.test(text), `④ ${name} 不得再出现「has no effect」`)
+  }
 })

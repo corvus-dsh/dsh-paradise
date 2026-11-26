@@ -6024,8 +6024,9 @@ function createEmergencyRepair(options                        ) {
            * 文字 —— 读者会以为那是诊断结论。
            *
            * 修法：`execute` 显式关掉。调用方**已经**拿到模型输出（`generation`），再让适配器自己
-           * 跑一遍模型不是「启动」，是重复计费。`harness.ts` 里那句注释写着同一件事：
-           * 「Wiring the model into `onTrigger` as well would call it twice per repair.」
+           * 跑一遍模型不是「启动」，是重复计费。`harness.ts` 的 `onTrigger` **确实**接在
+           * `executeSession()` 上（那个函数会调 `llm.generate`），这正是必须显式关掉它的原因 ——
+           * 而不是「那边什么都没做」。注释与代码必须说同一件事，否则下一个读的人会在别处再接一次。
            */
           execute: false,
         }               )

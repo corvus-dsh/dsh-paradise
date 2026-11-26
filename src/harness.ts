@@ -328,13 +328,6 @@ export function createHarness(config: HarnessConfig): HarnessRuntime {
   const messages = createRawMessages({})
 
   /**
-   * THE REPAIR SESSION'S EXECUTOR.
-   *
-   * The session adapter is created with an `onTrigger` that does NOTHING here on purpose: the actual
-   * model call happens in the launcher's repair step, where the result is compiled and run. Wiring the
-   * model into `onTrigger` as well would call it twice per repair.
-   */
-  /**
    * THE EXECUTOR BEHIND `trigger`.
    *
    * An adapter that reports `capabilities.trigger === true` must actually be able to start something.

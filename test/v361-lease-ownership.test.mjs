@@ -117,16 +117,35 @@ test('v361 ③: the SAME owner with a DIFFERENT epoch is a loss (id reuse / torn
   assert.equal(result.code, 'LEASE_LOST')
 })
 
-test('v361 ④: a key that VANISHED mid-body is ok + a warning ("不存在" is not "被抢")', async () => {
+test('v361 ④: a key that VANISHED mid-body is ALSO LEASE_LOST (cannot prove we held it)', async () => {
+  /**
+   * ── F2（S13）：这条期望本身曾经是回归 ──────────────────────────────────────────────────────────
+   *
+   * 上一版这里断言 `ok: true` + 一条 warning，理由写作「不存在 ≠ 被抢」。执行者按那句话改了代码
+   * （`&& current !== undefined`），于是 `withLease` 在**键消失**时报告成功。
+   *
+   * 为什么那是 fail-open：`current === undefined` **无法区分**这两种事实——
+   *   a) 存储被清理 / 键过期删除（真的没人抢）；
+   *   b) 继任者接管、做完活、释放了键（**丢更新**，且是我们报告成功的那一种）。
+   * 而 fence 的语义是「整个正文期间我是否一直持有」。判不出来的时候，安全侧只能报丢失。
+   *
+   * 一个只在「能证明持有」时才报成功的 gate，是 gate；只在「能证明被抢」时才报失败，是审查。
+   */
   const { adapter, state } = memoryAdapter()
   const result = await withLease(adapter, 'k', { owner: 'me', waitMs: 0 }, async () => {
     state.current = undefined
     return 'value'
   })
-  assert.equal(result.ok, true, '④ 键消失不代表有人抢，正文结果仍然有效')
-  assert.equal(result.value, 'value')
+  assert.equal(result.ok, false, '④ 键消失 ⇒ 无法证明仍持有 ⇒ 必须 fail-closed')
+  assert.equal(result.code, 'LEASE_LOST', `④ 实测 ${result.code}`)
   assert.ok(result.warnings.some((line) => line.includes('已不存在')),
-    `④ 必须留一条「键已不存在」的 warning，实测：${result.warnings.join(' | ')}`)
+    `④ warning 必须点名「键已不存在」这一种，实测：${result.warnings.join(' | ')}`)
+  /**
+   * 两种丢失必须**可分辨**：一句通用的「租约丢失」会让读日志的人分不清是「被抢」还是「键没了」，
+   * 而这两种事实的处置完全不同（前者要报警，后者要查存储）。
+   */
+  assert.ok(!result.warnings.some((line) => line.includes('易主')),
+    `④ 「键消失」不得被写成「易主」，实测：${result.warnings.join(' | ')}`)
 })
 
 test('v361 ⑤: a throwing body is BODY_FAILED, and the release is still attempted', async () => {

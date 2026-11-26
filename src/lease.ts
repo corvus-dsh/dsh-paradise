@@ -133,19 +133,38 @@ export async function withLease<T>(
      *
      * 自我接管的情况必须仍然为真：同一 owner、同一 epoch ⇒ 仍然是我们 ⇒ 不算丢失。
      */
-    if (!leaseOwnedBy(current, lease) && current !== undefined) {
-      warnings.push(
-        `租约在正文执行期间易主（epoch=${lease.epoch}，现任=${current.owner ?? '无'}@${current.epoch ?? '?'}）`,
-      )
-      return { ok: false, code: 'LEASE_LOST', reason: '正文执行期间租约已被其它持有者接管', lease, warnings }
-    }
     /**
-     * `current === undefined`（键已消失）是**另一种**事实：没有人持有，也就没有人抢。旧代码把
-     * undefined 交给 `isLeaseExpired`（它对 undefined 返回 true），于是「键被删掉」被读成「过期」——
-     * 那是把「不存在」与「过期」混成一句。这里显式分开，并记一条 warning 而不是失败。
+     * ── F2（S13）：`current === undefined` 也是 `LEASE_LOST` ──────────────────────────────────────
+     *
+     * 上一版把 `&& current !== undefined` 加在这里，把「键在正文期间消失」判成 `ok: true` + 一条
+     * warning，理由写作「不存在 ≠ 被抢」。**那是一条无法证伪的区分**：
+     *
+     *   · 没法区分「存储被清理」与「继任者做完自己的活之后释放了键」；
+     *   · 而后者正是**丢更新**本身 —— 我们刚改过的状态已经被别人改过，而我们还报告成功。
+     *
+     * 这条 fence 的语义是「**整个正文期间我是否一直持有**」。一旦 `current` 为 `undefined`，
+     * 「一直持有」就**无法证明**了；`leaseOwnedBy` 对 undefined 返回 false，那是正确的答案，
+     * 不该被一个 `!== undefined` 旁路掉。**安全性判定失败时必须 fail-closed**——这是 fail-open 的
+     * 教科书形态：把「无法证明」读成「没有反例」。
+     *
+     * 顺带把两种丢失在 warning 里分开写（一个具名事实，不是一句通用话）：
+     * 键消失、被继任者接管，读日志的人必须能分辨是哪一种。
      */
-    if (current === undefined) {
-      warnings.push('租约在正文执行期间已不存在（键被删除或存储被清理）')
+    if (!leaseOwnedBy(current, lease)) {
+      warnings.push(
+        current === undefined
+          ? `租约在正文执行期间已不存在（epoch=${lease.epoch}）—— 「无法证明仍持有」按丢失处理`
+          : `租约在正文执行期间易主（epoch=${lease.epoch}，现任=${current.owner ?? '无'}@${current.epoch ?? '?'}）`,
+      )
+      return {
+        ok: false,
+        code: 'LEASE_LOST',
+        reason: current === undefined
+          ? '正文执行期间租约键消失，无法证明整段正文期间持有'
+          : '正文执行期间租约已被其它持有者接管',
+        lease,
+        warnings,
+      }
     }
     return { ok: true, value, lease, warnings }
   } catch (error) {

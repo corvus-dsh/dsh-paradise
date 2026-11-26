@@ -56,6 +56,18 @@ const rehearse = flag('rehearse', false) === true
 const allowCommands = flag('allow-commands', false) === true
 const restartSpec = flag('restart', undefined)
 const maxRounds = Number(flag('max-rounds', 10))
+/**
+ * ── THE LEASE, ON BY DEFAULT (S14 / N1) ──────────────────────────────────────────────────
+ *
+ * Before this existed the CLI passed no lease, so `runRepairSession` took its explicit
+ * 「no lease」 bypass and `withLease` was never entered — the fence was wired but never closed.
+ * A gate with no assembler is behaviourally identical to no gate (this batch's second instance).
+ *
+ * Now the CLI assembles one by default. `--no-lease` turns it off and SAYS SO in the run output,
+ * because 「关掉了」与「忘了接」在日志里必须是两件不同的事。
+ */
+const leaseEnabled = flag('no-lease', false) !== true
+const leaseDir = resolve(String(flag('lease-dir', join(workspace, '.paradise-leases'))))
 
 const say = (line = '') => console.log(line)
 const dim = (text) => `\x1b[2m${text}\x1b[0m`
@@ -161,6 +173,14 @@ if (llm === undefined) {
   process.exit(3)
 }
 
+/**
+ * THE LEASE MODE IS PART OF THE HEADER, NOT OF THE REHEARSE BRANCH.
+ *
+ * It was first inserted inside `if (rehearse …)`, so a real-provider run printed nothing about the
+ * fence — and 「这次到底有没有闸门」 became unanswerable precisely on the path that writes for real.
+ */
+say(dim(`  租约      : ${leaseEnabled ? `已装配（${leaseDir}）` : '已显式关闭（--no-lease）：两个 repair 进程可同时写同一个 workspace'}`))
+
 if (rehearse && providerModel() === undefined) {
   say(dim('  模型      : rehearsal（固定脚本，用于证明机制；不是真实诊断）'))
   say()
@@ -173,12 +193,31 @@ const restart =
     ? undefined
     : { command: String(restartSpec).split(/\s+/u).filter(Boolean), cwd: workspace }
 
+/**
+ * ── WHY AN ADVISORY ADAPTER WOULD BE REFUSED, NOT USED ────────────────────────────────────
+ *
+ * `withLease` returns `LEASE_UNAVAILABLE` for a non-exclusive adapter rather than falling back
+ * to 「probably fine」. So the CLI must hand it a genuinely exclusive one: `createSyncLeaseAdapter`
+ * creates a record per key with an exclusive file create, which IS atomic on a local filesystem —
+ * the same mechanism `dsh-memory` already relies on for its lock files.
+ */
+const lease = leaseEnabled
+  ? {
+      adapter: layer.createSyncLeaseAdapter({ dir: leaseDir, owner: `repair-${process.pid}` }),
+      key: workspace,
+      owner: `repair-${process.pid}`,
+      ttlMs: 120_000,
+      waitMs: Number(flag('lease-wait-ms', 0)),
+    }
+  : undefined
+
 const result = await layer.runRepairSession({
   workspace,
   logPath,
   llm,
   dryRun,
   allowCommands,
+  ...(lease === undefined ? {} : { lease }),
   ...(restart === undefined ? {} : { restart }),
   maxRounds,
   onEvent(event) {

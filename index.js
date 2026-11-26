@@ -11619,6 +11619,52 @@ async function runRepairSession(options                      )                  
    */
   const reportPath = (absolute        )         => relative(workspace, absolute).split(sep).join('/')
 
+  /**
+   * ── THE ONE PLACE A REPAIR WRITES TO DISK, WITH THE LEASE AROUND IT ────────────────────────────
+   *
+   * The tools that actually reach the filesystem (`write_file`, `append_file`) share one body
+   * function. Writing the lease logic into each of them would be two implementations of one rule —
+   * the exact shape this repository has recorded as a defect three times. So the write itself is
+   * the parameter, and this is the only place that decides whether it is allowed to happen.
+   *
+   * `withLease` refuses an advisory adapter (`LEASE_UNAVAILABLE`) and a taken key (`LEASE_BUSY`), and
+   * reports `LEASE_LOST` when the fence broke while the body ran. All three are RESULTS, not throws —
+   * a maintenance pass must report 「没写成」 and let the caller decide, not die mid-repair.
+   *
+   * ── WHY THE RESULT IS `string | undefined` AND NOT A DISCRIMINATED UNION ─────────────────────
+   *
+   * The first version returned `{ ok: true } | { ok: false; code; reason }`. Type-checking rejected
+   * the two `outcome.code` reads with TS2339, and the probe explained why: `WithLeaseResult` declares
+   * `ok: boolean` with optional `code`/`reason`, so the value flowing in is not a discriminated union
+   * to begin with — and under `strictNullChecks: false` the negation of `ok: boolean` does not narrow
+   * as a literal discriminant. Wrapping it in a second self-made union inherited that.
+   *
+   * The callers never needed a code: they need **「没写成，原因是这个」**. Returning the reason (or
+   * `undefined` for success) states exactly that, has no union to narrow, and keeps the named codes
+   * where they belong — in the `write-refused` event, taken straight from `result.code`.
+   */
+  const guardedWrite = async (action        , body                                  )                              => {
+    if (options.lease === undefined) {
+      /** 未接租约：与接线前**完全一致**。这条旁路是显式的，且被 v368 ② 断言过它不会被静默收窄。 */
+      await body()
+      return undefined
+    }
+    const result = await withLease(
+      options.lease.adapter,
+      options.lease.key,
+      {
+        owner: options.lease.owner,
+        waitMs: Number(options.lease.waitMs ?? 0),
+        ttlMs: Number(options.lease.ttlMs ?? 30_000),
+      },
+      async () => body(),
+    )
+    if (result.ok) return undefined
+    const code = String(result.code ?? 'LEASE_UNAVAILABLE')
+    emit({ type: 'write-refused', action, code, reason: String(result.reason ?? '') })
+    return `${code} —— ${String(result.reason ?? '未取得租约')}`
+  }
+
   const tools = new Map                   ()
   tools.set('read_file', {
     name: 'read_file',
@@ -11654,8 +11700,14 @@ async function runRepairSession(options                      )                  
         withheld.push(`write_file ${args.path}`)
         return `[dry-run] 已跳过写入 ${args.path}（${content.length} 字符）`
       }
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, content, 'utf8')
+      const refusal = await guardedWrite(`write_file ${args.path}`, () => {
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, content, 'utf8')
+      })
+      if (refusal !== undefined) {
+        withheld.push(`write_file ${args.path}`)
+        return `未写入 ${args.path}：${refusal}`
+      }
       written.push(reportPath(path))
       emit({ type: 'file-written', path: reportPath(path) })
       return `已写入 ${args.path}（${content.length} 字符）`
@@ -11677,8 +11729,14 @@ async function runRepairSession(options                      )                  
         withheld.push(`append_file ${args.path}`)
         return `[dry-run] 已跳过追加 ${args.path}`
       }
-      mkdirSync(dirname(path), { recursive: true })
-      appendFileSync(path, content, 'utf8')
+      const refusal = await guardedWrite(`append_file ${args.path}`, () => {
+        mkdirSync(dirname(path), { recursive: true })
+        appendFileSync(path, content, 'utf8')
+      })
+      if (refusal !== undefined) {
+        withheld.push(`append_file ${args.path}`)
+        return `未追加 ${args.path}：${refusal}`
+      }
       written.push(reportPath(path))
       return `已追加到 ${args.path}`
     },
